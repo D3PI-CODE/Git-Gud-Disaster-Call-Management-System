@@ -23,7 +23,7 @@ app.add_middleware(
 app.include_router(auth_router)
 
 
-def require_agent(authorization: str | None = Header(default=None)):
+def require_agent(authorization: Optional[str] = Header(default=None)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
     if not authorization or not authorization.startswith("Bearer "):
@@ -74,7 +74,7 @@ async def process_audio(
     audio: Optional[UploadFile] = File(None),
     caller_name: str = Form("Unknown"),
     location: str = Form("Unknown"),
-    authorization: str | None = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
 ):
     require_agent(authorization)
     upload = audio or file
@@ -91,7 +91,7 @@ async def process_incident(
     audio: UploadFile = File(...),
     caller_name: str = Form("Unknown"),
     location: str = Form("Unknown"),
-    authorization: str | None = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
 ):
     require_agent(authorization)
     try:
@@ -101,7 +101,7 @@ async def process_incident(
 
 
 @app.get("/api/incidents")
-def list_incidents(authorization: str | None = Header(default=None)):
+def list_incidents(authorization: Optional[str] = Header(default=None)):
     require_agent(authorization)
     incidents = fetch_incidents()
     for row in incidents:

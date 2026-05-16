@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, field_validator
 
@@ -9,7 +11,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class AuthBody(BaseModel):
     email: str
     password: str
-    name: str | None = None
+    name: Optional[str] = None
 
     @field_validator("email")
     @classmethod
@@ -90,7 +92,7 @@ def agent_login(body: AuthBody):
 
 
 @router.get("/session")
-def agent_session(authorization: str | None = Header(default=None)):
+def agent_session(authorization: Optional[str] = Header(default=None)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
     if not authorization or not authorization.startswith("Bearer "):

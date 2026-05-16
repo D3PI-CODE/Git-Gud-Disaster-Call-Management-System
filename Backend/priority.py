@@ -1,4 +1,9 @@
-def urgency_to_priority(urgency_score: float | None, incident_type: str | None = None) -> str:
+from typing import Optional
+
+
+def urgency_to_priority(
+    urgency_score: Optional[float], incident_type: Optional[str] = None
+) -> str:
     score = float(urgency_score or 0)
     if incident_type == "MEDICAL" or score >= 0.8:
         return "critical"

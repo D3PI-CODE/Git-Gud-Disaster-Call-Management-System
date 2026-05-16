@@ -1,12 +1,14 @@
 import os
 import re
+from typing import Optional
+
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
 load_dotenv()
 
 
-def normalize_supabase_url(url: str | None) -> str | None:
+def normalize_supabase_url(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
     url = url.strip().strip('"').strip("'")
@@ -14,7 +16,7 @@ def normalize_supabase_url(url: str | None) -> str | None:
     return url
 
 
-def normalize_supabase_key(key: str | None) -> str | None:
+def normalize_supabase_key(key: Optional[str]) -> Optional[str]:
     if not key:
         return None
     return key.strip().strip('"').strip("'")
@@ -25,7 +27,7 @@ key = normalize_supabase_key(os.environ.get("SUPABASE_KEY"))
 
 if not url or not key:
     print("Warning: SUPABASE_URL or SUPABASE_KEY not set in Backend/.env")
-    supabase: Client | None = None
+    supabase: Optional[Client] = None
 else:
     supabase: Client = create_client(url, key)
 
