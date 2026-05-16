@@ -63,6 +63,15 @@ export default function App() {
             {liveStatus === 'live' ? 'Signal Active' : 'Connecting...'}
           </div>
           <Clock />
+          <button 
+            onClick={() => supabase.auth.signOut().then(() => window.location.assign('/login'))}
+            style={{ 
+              background: 'transparent', border: '1px solid var(--border-mid)', color: 'var(--txt-muted)', 
+              borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer', marginLeft: 16 
+            }}
+          >
+            Sign Out
+          </button>
         </div>
       </header>
 

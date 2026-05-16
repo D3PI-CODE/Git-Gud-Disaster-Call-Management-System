@@ -6,13 +6,24 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error,    setError]    = useState('')
   const [loading,  setLoading]  = useState(false)
+  const [isSignUp, setIsSignUp] = useState(false)
 
-  async function handleLogin(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
     setLoading(true); setError('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) { setError(error.message); setLoading(false) }
-    else window.location.assign('/dashboard')
+    
+    if (isSignUp) {
+      const { error } = await supabase.auth.signUp({ email, password })
+      if (error) { setError(error.message); setLoading(false) }
+      else {
+        setError('Check your email to confirm sign up (or sign in if auto-confirm is enabled).')
+        setLoading(false)
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) { setError(error.message); setLoading(false) }
+      else window.location.assign('/dashboard')
+    }
   }
 
   return (
@@ -51,7 +62,7 @@ export default function Login() {
           }}>Agent Portal</div>
         </div>
 
-        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="form-row">
             <label className="form-label">Agent Email</label>
             <input className="form-input" type="email" placeholder="agent@resqnet.lk"
@@ -63,11 +74,23 @@ export default function Login() {
               value={password} onChange={e => setPassword(e.target.value)} required />
           </div>
 
-          {error && <div className="error-banner">⚠ {error}</div>}
+          {error && <div className="error-banner" style={{ background: error.includes('Check your email') ? 'var(--lime-dim)' : undefined, color: error.includes('Check your email') ? 'var(--lime-base)' : undefined, borderColor: error.includes('Check your email') ? 'var(--lime-border)' : undefined }}>
+            {error.includes('Check your email') ? '✓ ' : '⚠ '} {error}
+          </div>}
 
           <button className="submit-btn" type="submit" disabled={loading}>
-            {loading ? '⏳  Signing in...' : '→  Sign In'}
+            {loading ? '⏳  Processing...' : (isSignUp ? '→  Sign Up' : '→  Sign In')}
           </button>
+          
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <button 
+              type="button" 
+              onClick={() => { setIsSignUp(!isSignUp); setError(''); }}
+              style={{ background: 'none', border: 'none', color: 'var(--txt-muted)', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+            </button>
+          </div>
         </form>
       </div>
     </div>

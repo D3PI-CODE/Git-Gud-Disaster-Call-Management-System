@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-const PRIORITY_ICONS = { critical: '●', high: '●', medium: '●', low: '●' }
+const PRIORITY_ICONS = { MEDICAL: '✚', DISASTER: '⚠', critical: '●', high: '●', medium: '●', low: '●' }
 
 const SENTIMENT_ICONS = { positive: '↑', neutral: '→', negative: '↓' }
 
@@ -49,22 +49,29 @@ function isNew(str) { return (Date.now() - new Date(str)) / 1000 < 20 }
 
 export default function IncidentCard({ incident }) {
   const {
-    priority    = 'low',
-    caller_name,
-    location,
+    incident_type = 'DISASTER',
+    users,
     created_at,
-    urgency     = 0,
-    stress      = 0,
+    urgency_score = 0,
+    transcript,
+    structured_data = {},
+  } = incident
+
+  const {
+    location = 'Unknown',
+    stress = 0,
     frustration = 0,
     sentiment,
-    transcript,
-    action_items,
-  } = incident
+    action_items = '',
+  } = structured_data || {}
+
+  const caller_name = users?.name || 'Unknown Caller'
+  const display_priority = incident_type === 'MEDICAL' ? 'critical' : 'high'
 
   const actions = parseActions(action_items)
 
   return (
-    <div className={`card ${priority}`}>
+    <div className={`card ${display_priority}`}>
       <div className="card-top" />
       <div className="card-inner">
 
@@ -82,9 +89,9 @@ export default function IncidentCard({ incident }) {
             </div>
           </div>
 
-          <div className={`p-badge ${priority}`}>
-            <span style={{ fontSize: 7 }}>{PRIORITY_ICONS[priority]}</span>
-            {priority}
+          <div className={`p-badge ${display_priority}`}>
+            <span style={{ fontSize: 7 }}>{PRIORITY_ICONS[incident_type] || PRIORITY_ICONS[display_priority]}</span>
+            {incident_type}
           </div>
         </div>
 
@@ -97,7 +104,7 @@ export default function IncidentCard({ incident }) {
 
         {/* Score bars */}
         <div className="scores">
-          <ScoreBar label="Urgency"     value={urgency}     type="urgency"     />
+          <ScoreBar label="Urgency"     value={urgency_score} type="urgency"     />
           <ScoreBar label="Stress"      value={stress}      type="stress"      />
           <ScoreBar label="Frustration" value={frustration} type="frustration" />
         </div>

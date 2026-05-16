@@ -4,7 +4,7 @@ import uvicorn
 
 from valsea import transcribe_audio
 from gemini import extract_disaster_data
-from supabase_client import insert_disaster_report, supabase
+from supabase_client import insert_incident, supabase
 
 app = FastAPI(title="Disaster Call Management System API")
 
@@ -28,9 +28,10 @@ async def process_audio(file: UploadFile = File(...)):
         
         # 3. Extract structured JSON using Gemini
         extracted_data = extract_disaster_data(transcription)
+        extracted_data["transcript"] = transcription
         
         # 4. Insert into Supabase
-        db_response = insert_disaster_report(extracted_data)
+        db_response = insert_incident(extracted_data)
         
         return {
             "status": "success",

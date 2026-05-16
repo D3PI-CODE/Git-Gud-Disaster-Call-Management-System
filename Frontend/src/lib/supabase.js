@@ -12,7 +12,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON)
 export async function fetchIncidents() {
   const { data, error } = await supabase
     .from('incidents')
-    .select('*')
+    .select('*, users(name, contact_number)')
     .order('created_at', { ascending: false })
   if (error) console.error('fetchIncidents:', error)
   return data ?? []
