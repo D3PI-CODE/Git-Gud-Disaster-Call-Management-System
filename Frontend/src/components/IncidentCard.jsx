@@ -44,9 +44,9 @@ function CollapsibleSection({ title, children, defaultOpen = false }) {
 
 function parseActionItems(text) {
   if (!text) return []
-  // Split on newlines or numbered list patterns
+  // Split only on line breaks, then strip any leading numbered-list prefix
   return text
-    .split(/\n|(?=\d+\.\s)/)
+    .split(/\r?\n/)
     .map(s => s.replace(/^\d+\.\s*/, '').trim())
     .filter(Boolean)
 }
