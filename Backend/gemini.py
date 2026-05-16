@@ -132,19 +132,20 @@ Prioritize life safety. Use VALSEA stress and urgency to inform priority and str
 
 def extract_disaster_data(text: str) -> dict:
     """Legacy text-only extraction (kept for /api/process-audio compatibility)."""
-    if not GROQ_API_KEY or client is None:
-        raise RuntimeError("GROQ_API_KEY is not configured. Add it to Backend/.env.")
+    if not GEMINI_API_KEY:
+        raise RuntimeError("Gemini API key is not initialized.")
 
-    system_prompt = (
-        "You are a disaster call analyst. "
-        "You always respond with a raw JSON object only — no markdown, no code fences, no extra text."
+    model = genai.GenerativeModel(
+        GEMINI_MODEL,
+        generation_config={"response_mime_type": "application/json"},
     )
 
-    user_prompt = f"""Analyze the following disaster call transcription and extract information as a JSON object.
-The JSON must contain exactly these keys:
-- "content": A concise summary of the disaster or situation.
-- "priority": The priority of the situation. Must be exactly one of "High", "Medium", or "Low".
-- "language": The language the caller was speaking.
+    prompt = f"""
+    Analyze the following disaster call transcription and extract the information into strict JSON format.
+    The JSON must contain the following keys exactly:
+    - "content": A concise summary of the disaster or situation.
+    - "priority": The priority of the situation. Must be exactly one of "High", "Medium", or "Low".
+    - "language": The language the caller was speaking.
 
 Transcription:
 \"{text}\""""

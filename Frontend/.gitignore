@@ -1,3 +1,4 @@
+
 # ================================
 # Environment & Secrets
 # ================================
@@ -22,6 +23,7 @@ build/
 
 # ESLint / Prettier
 .eslintcache
+.prettierignore
 
 # ================================
 # Python / FastAPI
@@ -51,14 +53,8 @@ var/
 sdist/
 develop-eggs/
 .installed.cfg
-.venv/lib/
-.venv/lib64/
-venv/lib/
-venv/lib64/
-env/lib/
-env/lib64/
-ENV/lib/
-ENV/lib64/
+lib/
+lib64/
 
 # pytest / coverage
 .pytest_cache/
