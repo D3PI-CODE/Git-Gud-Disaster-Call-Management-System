@@ -1,15 +1,18 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Sun,
   Moon,
   MapPin,
   Loader2,
   User,
-  Stethoscope,
-  AlertTriangle,
+  Activity,
+  ShieldAlert,
+  Flame,
+  Clock,
   Radio,
 } from 'lucide-react'
 import { supabase, attachAgentToken } from '../lib/supabaseClient'
+import './AgentDashboard.css'
 
 const THEME_KEY = 'resqnet-theme'
 
@@ -59,11 +62,16 @@ function getUser() {
   }
 }
 
-const URGENCY_BORDER = {
-  critical: 'border-t-[#FF3B30]',
-  high: 'border-t-[#FF7A00]',
-  medium: 'border-t-[#FFBB00]',
-  low: 'border-t-[#3D8BFF]',
+function syncPillClass(liveStatus) {
+  if (liveStatus === 'live') return 'sync-pill sync-pill--live'
+  if (liveStatus === 'error') return 'sync-pill sync-pill--error'
+  return 'sync-pill'
+}
+
+function syncPillLabel(liveStatus) {
+  if (liveStatus === 'live') return 'Live'
+  if (liveStatus === 'error') return 'Offline'
+  return 'Syncing'
 }
 
 /* ─── Theme ──────────────────────────────────────────────── */
@@ -85,17 +93,11 @@ function useTheme() {
 
 /* ─── Sub-components ─────────────────────────────────────── */
 
-function BrandMark({ isDark }) {
+function BrandMark() {
   return (
-    <div className="flex shrink-0 items-center gap-2">
-      <div
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
-          isDark
-            ? 'border-[#A8FF3E]/35 bg-[#A8FF3E]/10'
-            : 'border-[#84CC16]/40 bg-[#84CC16]/10'
-        }`}
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+    <div className="brand-mark">
+      <div className="brand-icon" aria-hidden>
+        <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
           <path
             d="M1 7 Q2.5 3 4 7 Q5.5 11 7 7 Q8.5 3 10 7 Q11.5 11 13 7"
             stroke="#A8FF3E"
@@ -105,13 +107,7 @@ function BrandMark({ isDark }) {
           />
         </svg>
       </div>
-      <span
-        className={`hidden font-['Chakra_Petch'] text-sm font-bold tracking-[0.18em] sm:inline ${
-          isDark ? 'text-[#E0E0E0]' : 'text-[#1E293B]'
-        }`}
-      >
-        RESQNET
-      </span>
+      <span className="brand-wordmark">RESQNET</span>
     </div>
   )
 }
@@ -120,20 +116,20 @@ function ThemeToggleButton({ isDark, onToggle }) {
   return (
     <button
       type="button"
+      className="btn-theme"
       onClick={onToggle}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all duration-200 ${
-        isDark
-          ? 'border-white/10 bg-[#2C2C2C] text-[#E0E0E0]/70 hover:border-[#A8FF3E]/30 hover:bg-[#A8FF3E]/10 hover:text-[#A8FF3E]'
-          : 'border-slate-200 bg-white text-slate-500 hover:border-[#84CC16]/40 hover:bg-[#84CC16]/10 hover:text-[#65A30D]'
-      }`}
     >
-      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {isDark ? (
+        <Sun className="btn-theme-icon" aria-hidden />
+      ) : (
+        <Moon className="btn-theme-icon" aria-hidden />
+      )}
     </button>
   )
 }
 
-function StatsOverviewBar({ incidents, isDark }) {
+function StatsOverviewBar({ incidents }) {
   const medical = incidents.filter(i => i.incident_type === 'MEDICAL').length
   const disaster = incidents.filter(
     i => i.incident_type === 'DISASTER' || !i.incident_type,
@@ -143,43 +139,25 @@ function StatsOverviewBar({ incidents, isDark }) {
   ).length
 
   const items = [
-    { label: 'Total Pending', value: incidents.length },
-    { label: 'Medical', value: medical },
-    { label: 'Disaster', value: disaster },
-    { label: 'Critical', value: critical },
+    { label: 'Total Pending', value: incidents.length, modifier: 'total' },
+    { label: 'Medical', value: medical, modifier: 'medical' },
+    { label: 'Disaster', value: disaster, modifier: 'disaster' },
+    { label: 'Critical', value: critical, modifier: 'critical' },
   ]
 
   return (
-    <div
-      className={`grid grid-cols-2 gap-4 rounded-lg border p-4 sm:grid-cols-4 sm:gap-6 sm:p-6 ${
-        isDark
-          ? 'border-white/[0.06] bg-[#2C2C2C]'
-          : 'border-slate-200 bg-white shadow-sm'
-      }`}
-    >
-      {items.map(({ label, value }) => (
-        <div key={label} className="flex min-w-0 flex-col gap-2 px-1 sm:px-2">
-          <span
-            className={`font-['Chakra_Petch'] text-[10px] font-semibold uppercase tracking-[0.14em] ${
-              isDark ? 'text-[#E0E0E0]/50' : 'text-slate-500'
-            }`}
-          >
-            {label}
-          </span>
-          <span
-            className={`font-['Chakra_Petch'] text-2xl font-bold tabular-nums tracking-tight ${
-              isDark ? 'text-[#E0E0E0]' : 'text-[#1E293B]'
-            }`}
-          >
-            {value}
-          </span>
+    <div className="stats-bar">
+      {items.map(({ label, value, modifier }) => (
+        <div key={label} className={`stat-card stat-card--${modifier}`}>
+          <span className="stat-card-label">{label}</span>
+          <span className="stat-card-value">{value}</span>
         </div>
       ))}
     </div>
   )
 }
 
-function StructuredTags({ data, isDark }) {
+function StructuredTags({ data }) {
   const skip = new Set(['location', 'action_items'])
   const entries = Object.entries(data).filter(
     ([k, v]) => !skip.has(k) && v != null && String(v).trim() !== '',
@@ -188,24 +166,41 @@ function StructuredTags({ data, isDark }) {
   if (entries.length === 0) return null
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="tag-container">
       {entries.map(([key, val]) => (
-        <span
-          key={key}
-          className={`rounded-md px-2 py-0.5 font-['JetBrains_Mono'] text-[10px] tracking-wide ${
-            isDark
-              ? 'border border-white/[0.08] bg-[#1A1A1A] text-[#E0E0E0]/70'
-              : 'border border-slate-200 bg-slate-50 text-slate-600'
-          }`}
-        >
-          {key.replace(/_/g, ' ')}: {String(val).slice(0, 40)}
+        <span key={key} className="tag-pill">
+          <span className="tag-pill-key">{key.replace(/_/g, ' ')}</span>
+          <span className="tag-pill-sep">·</span>
+          <span>{String(val).slice(0, 48)}</span>
         </span>
       ))}
     </div>
   )
 }
 
-function IncidentCard({ incident, isDark, onAccept, accepting }) {
+function TypeBadge({ isMedical, typeLabel }) {
+  if (isMedical) {
+    return (
+      <span className="badge-medical">
+        <span className="badge-icon-wrap">
+          <ShieldAlert className="badge-icon" aria-hidden />
+        </span>
+        {typeLabel}
+      </span>
+    )
+  }
+
+  return (
+    <span className="badge-disaster">
+      <span className="badge-icon-wrap">
+        <Flame className="badge-icon" aria-hidden />
+      </span>
+      {typeLabel}
+    </span>
+  )
+}
+
+function IncidentCard({ incident, onAccept, accepting }) {
   const structured = parseStructured(incident.structured_data)
   const location = structured.location || 'Location unknown'
   const score = normalizeScore(incident.urgency_score)
@@ -215,119 +210,51 @@ function IncidentCard({ incident, isDark, onAccept, accepting }) {
   const transcript = incident.transcript || ''
 
   return (
-    <article
-      className={`flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-t-4 transition-shadow duration-200 ${URGENCY_BORDER[tier]} ${
-        tier === 'critical' ? 'animate-[urgency-pulse_2s_ease-in-out_infinite]' : ''
-      } ${
-        isDark
-          ? 'border-white/[0.06] bg-[#2C2C2C] hover:shadow-[0_8px_32px_rgba(0,0,0,0.35)]'
-          : 'border-slate-200 bg-white shadow-sm hover:shadow-md'
-      }`}
-    >
-      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6">
-        <div className="flex items-start justify-between gap-3">
-          <span
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-['Chakra_Petch'] text-[10px] font-bold uppercase tracking-[0.12em] ${
-              isMedical
-                ? isDark
-                  ? 'bg-[#3D8BFF]/15 text-[#6BA3FF] ring-1 ring-[#3D8BFF]/25'
-                  : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
-                : isDark
-                  ? 'bg-[#FF7A00]/15 text-[#FF9F4D] ring-1 ring-[#FF7A00]/25'
-                  : 'bg-orange-50 text-orange-700 ring-1 ring-orange-200'
-            }`}
-          >
-            {isMedical ? (
-              <Stethoscope className="h-3 w-3" />
-            ) : (
-              <AlertTriangle className="h-3 w-3" />
-            )}
-            {typeLabel}
-          </span>
-          <div className="shrink-0 text-right">
-            <p
-              className={`font-['Chakra_Petch'] text-[10px] font-semibold uppercase tracking-[0.14em] ${
-                isDark ? 'text-[#E0E0E0]/45' : 'text-slate-400'
-              }`}
-            >
-              Urgency
-            </p>
-            <p
-              className={`font-['Chakra_Petch'] text-2xl font-bold tabular-nums leading-none sm:text-3xl ${
-                tier === 'critical'
-                  ? 'text-[#FF3B30]'
-                  : tier === 'high'
-                    ? 'text-[#FF7A00]'
-                    : tier === 'medium'
-                      ? 'text-[#FFBB00]'
-                      : isDark
-                        ? 'text-[#3D8BFF]'
-                        : 'text-blue-600'
-              }`}
-            >
-              {score}
-            </p>
+    <article className={`incident-card incident-card--${tier}`}>
+      <header className="incident-card-header">
+        <div className="incident-card-header-row">
+          <TypeBadge isMedical={isMedical} typeLabel={typeLabel} />
+          <div className="urgency-block">
+            <p className="urgency-label">Urgency</p>
+            <p className="urgency-score">{score}</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="incident-card-body">
+        <div className="location-wrapper">
+          <div className="location-row">
+            <MapPin className="location-icon" aria-hidden />
+            <p className="location-text">{location}</p>
+          </div>
+          <div className="timestamp-row">
+            <Clock className="timestamp-icon" aria-hidden />
+            <span>{timeAgo(incident.created_at)}</span>
           </div>
         </div>
 
-        <div className="space-y-1">
-          <div
-            className={`flex min-w-0 items-start gap-2 text-sm ${
-              isDark ? 'text-[#E0E0E0]/80' : 'text-slate-600'
-            }`}
-          >
-            <MapPin
-              className={`mt-0.5 h-4 w-4 shrink-0 ${
-                isDark ? 'text-[#A8FF3E]/80' : 'text-[#65A30D]'
-              }`}
-            />
-            <span className="min-w-0 flex-1 break-words font-['Outfit'] font-medium leading-snug">
-              {location}
-            </span>
-          </div>
-          <p
-            className={`pl-6 font-['JetBrains_Mono'] text-[10px] ${
-              isDark ? 'text-[#E0E0E0]/40' : 'text-slate-400'
-            }`}
-          >
-            {timeAgo(incident.created_at)}
-          </p>
-        </div>
+        {transcript && <p className="incident-transcript">{transcript}</p>}
 
-        {transcript && (
-          <p
-            className={`line-clamp-3 font-['Outfit'] text-sm leading-relaxed ${
-              isDark ? 'text-[#E0E0E0]/65' : 'text-slate-600'
-            }`}
-          >
-            {transcript}
-          </p>
-        )}
-
-        <StructuredTags data={structured} isDark={isDark} />
+        <StructuredTags data={structured} />
       </div>
 
-      <div className={`border-t p-4 ${isDark ? 'border-white/[0.06]' : 'border-slate-100'}`}>
+      <footer className="incident-card-footer">
         <button
           type="button"
+          className="btn-accept"
           disabled={accepting}
           onClick={() => onAccept(incident)}
-          className={`flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3 font-['Chakra_Petch'] text-[11px] font-bold uppercase tracking-[0.2em] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-30 ${
-            isDark
-              ? 'border-[#A8FF3E]/30 bg-[#A8FF3E]/10 text-[#A8FF3E] hover:border-[#A8FF3E] hover:bg-[#A8FF3E] hover:text-[#1A1A1A] hover:shadow-[0_4px_24px_rgba(168,255,62,0.2)]'
-              : 'border-[#84CC16]/40 bg-[#84CC16]/10 text-[#65A30D] hover:border-[#84CC16] hover:bg-[#84CC16] hover:text-white hover:shadow-[0_4px_24px_rgba(132,204,22,0.25)]'
-          }`}
         >
           {accepting ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="btn-accept-icon" aria-hidden />
               Accepting…
             </>
           ) : (
             'Accept Case'
           )}
         </button>
-      </div>
+      </footer>
     </article>
   )
 }
@@ -350,8 +277,6 @@ export default function AgentDashboard({ onSignOut }) {
     .slice(0, 2)
     .toUpperCase()
 
-  // Initial backfill: fetch every row currently in PENDING so the dashboard
-  // is populated before the realtime stream takes over.
   const loadPending = useCallback(async () => {
     const { data, error: err } = await supabase
       .from('incidents')
@@ -366,22 +291,9 @@ export default function AgentDashboard({ onSignOut }) {
   useEffect(() => {
     let cancelled = false
 
-    // Make sure the freshest JWT is attached to the singleton client
-    // before we open the realtime socket. Without this, RLS-gated
-    // postgres_changes events are filtered out silently.
     const token = localStorage.getItem('resqnet_token')
     if (token) attachAgentToken(token)
 
-    /* ─── Realtime subscription ───────────────────────────────────────
-     * Channel: 'schema-db-changes'
-     *   - INSERT on public.incidents WHERE status = 'PENDING'
-     *       -> append payload.new and re-sort by urgency_score DESC
-     *   - UPDATE on public.incidents
-     *       -> if status leaves PENDING, evict from state
-     *       -> else upsert the row and re-sort by urgency_score DESC
-     * The Supabase publication (ALTER PUBLICATION supabase_realtime
-     * ADD TABLE public.incidents) MUST exist or none of this fires.
-     * ──────────────────────────────────────────────────────────────── */
     const channel = supabase
       .channel('schema-db-changes')
       .on(
@@ -433,12 +345,10 @@ export default function AgentDashboard({ onSignOut }) {
         else setLiveStatus('connecting')
       })
 
-    // Kick off the initial backfill in parallel with channel subscription.
     loadPending()
       .then(rows => {
         if (cancelled) return
         setIncidents(prev => {
-          // Merge backfill with anything realtime may have already pushed.
           const byId = new Map(prev.map(r => [r.id, r]))
           for (const row of rows) byId.set(row.id, row)
           return sortByUrgency([...byId.values()])
@@ -465,167 +375,83 @@ export default function AgentDashboard({ onSignOut }) {
       .update({ status: 'IN_PROGRESS', agent_id: user.id || null })
       .eq('id', incident.id)
     if (err) setError(err.message)
-    // Note: we don't optimistically remove here — the realtime UPDATE
-    // handler will evict the row as soon as Postgres confirms the change,
-    // which keeps every connected dashboard in sync.
     setAcceptingId(null)
   }
 
-  const shell = useMemo(
-    () =>
-      isDark
-        ? 'bg-[#1A1A1A] text-[#E0E0E0]'
-        : 'bg-[#F8FAFC] text-[#1E293B]',
-    [isDark],
-  )
-
   return (
-    <div className={`flex min-h-screen flex-col font-['Outfit'] antialiased ${shell}`}>
-      <header
-        className={`fixed inset-x-0 top-0 z-50 border-b ${
-          isDark
-            ? 'border-white/[0.06] bg-[#1A1A1A]/95 backdrop-blur-md'
-            : 'border-slate-200 bg-[#F8FAFC]/95 backdrop-blur-md'
-        }`}
-      >
-        <div className="mx-auto flex h-16 w-full max-w-[1600px] items-center gap-3 px-4 sm:gap-4 sm:px-6 lg:px-8">
-          <BrandMark isDark={isDark} />
+    <div className="dashboard-container">
+      <header className="dashboard-header">
+        <div className="dashboard-inner">
+          <BrandMark />
 
-          <div
-            className={`hidden h-6 w-px shrink-0 md:block ${
-              isDark ? 'bg-white/10' : 'bg-slate-200'
-            }`}
-          />
+          <div className="header-divider" aria-hidden />
 
-          <div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden sm:gap-3">
-            <p
-              className={`truncate font-['Chakra_Petch'] text-[10px] font-semibold uppercase tracking-[0.14em] ${
-                isDark ? 'text-[#E0E0E0]/50' : 'text-slate-500'
-              }`}
-            >
-              <span className="hidden sm:inline">Active Pending Cases</span>
-              <span className="sm:hidden">Pending</span>
+          <div className="header-pending">
+            <Activity
+              className={`header-pending-icon${liveStatus === 'live' ? ' is-live' : ''}`}
+              aria-hidden
+            />
+            <p className="header-pending-label">
+              <span className="header-pending-label-short">Pending</span>
+              <span className="header-pending-label-full">Active Pending Cases</span>
             </p>
-            <p
-              className={`shrink-0 font-['Chakra_Petch'] text-xl font-bold tabular-nums ${
-                isDark ? 'text-[#E0E0E0]' : 'text-[#1E293B]'
-              }`}
-            >
-              {incidents.length}
-            </p>
+            <p className="header-pending-count">{incidents.length}</p>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <div
-              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 font-['Chakra_Petch'] text-[9px] font-semibold uppercase tracking-[0.14em] sm:gap-2 sm:px-3 ${
-                liveStatus === 'live'
-                  ? isDark
-                    ? 'border border-[#34C759]/30 bg-[#34C759]/10 text-[#34C759]'
-                    : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : isDark
-                    ? 'border border-white/10 bg-[#2C2C2C] text-[#E0E0E0]/40'
-                    : 'border border-slate-200 bg-white text-slate-400'
-              }`}
-            >
-              <Radio className="h-3 w-3 shrink-0" />
-              <span className="hidden min-[420px]:inline">
-                {liveStatus === 'live' ? 'Live' : 'Syncing'}
-              </span>
+          <div className="header-actions">
+            <div className={syncPillClass(liveStatus)}>
+              <Radio className="sync-pill-icon" aria-hidden />
+              <span className="sync-pill-text">{syncPillLabel(liveStatus)}</span>
             </div>
 
             <ThemeToggleButton isDark={isDark} onToggle={toggle} />
 
             <button
               type="button"
+              className="btn-profile"
               onClick={onSignOut}
               title={agentName}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all duration-200 ${
-                isDark
-                  ? 'border-white/10 bg-[#2C2C2C] text-[#E0E0E0]/80 hover:border-white/20'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-              }`}
             >
               {initials ? (
-                <span className="font-['Chakra_Petch'] text-[10px] font-bold">
-                  {initials}
-                </span>
+                <span className="btn-profile-initials">{initials}</span>
               ) : (
-                <User className="h-4 w-4" />
+                <User className="btn-profile-icon" aria-hidden />
               )}
             </button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col px-4 pb-8 pt-20 sm:px-6 sm:pb-10 lg:px-8">
+      <main className="dashboard-main">
         {error && (
-          <div
-            className={`mb-6 rounded-lg border px-4 py-3 font-['Outfit'] text-sm ${
-              isDark
-                ? 'border-[#FF3B30]/30 bg-[#FF3B30]/10 text-[#FF6B63]'
-                : 'border-red-200 bg-red-50 text-red-700'
-            }`}
-            role="alert"
-          >
+          <div className="alert-banner" role="alert">
             {error}
           </div>
         )}
 
-        <section className="mb-6 sm:mb-8">
-          <StatsOverviewBar incidents={incidents} isDark={isDark} />
+        <section className="stats-section">
+          <StatsOverviewBar incidents={incidents} />
         </section>
 
         {loading ? (
-          <div
-            className={`flex min-h-[min(24rem,calc(100vh-14rem))] flex-col items-center justify-center gap-4 rounded-lg border px-6 py-16 ${
-              isDark
-                ? 'border-white/[0.06] bg-[#2C2C2C]'
-                : 'border-slate-200 bg-white'
-            }`}
-          >
-            <Loader2
-              className={`h-8 w-8 animate-spin ${
-                isDark ? 'text-[#A8FF3E]' : 'text-[#65A30D]'
-              }`}
-            />
-            <p
-              className={`font-['Chakra_Petch'] text-xs font-semibold uppercase tracking-[0.14em] ${
-                isDark ? 'text-[#E0E0E0]/50' : 'text-slate-500'
-              }`}
-            >
-              Loading pending incidents…
-            </p>
+          <div className="state-panel">
+            <Loader2 className="state-panel-spinner" aria-hidden />
+            <p className="state-panel-title">Loading pending incidents…</p>
           </div>
         ) : incidents.length === 0 ? (
-          <div
-            className={`flex min-h-[min(24rem,calc(100vh-14rem))] flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-16 text-center ${
-              isDark
-                ? 'border-white/10 bg-[#2C2C2C]/50'
-                : 'border-slate-300 bg-white'
-            }`}
-          >
-            <p
-              className={`font-['Chakra_Petch'] text-sm font-bold tracking-wide ${
-                isDark ? 'text-[#E0E0E0]/60' : 'text-slate-500'
-              }`}
-            >
-              No pending cases
-            </p>
-            <p
-              className={`max-w-sm font-['Outfit'] text-sm ${
-                isDark ? 'text-[#E0E0E0]/40' : 'text-slate-400'
-              }`}
-            >
+          <div className="state-panel state-panel--empty">
+            <Activity className="state-panel-icon" aria-hidden />
+            <p className="state-panel-title">No pending cases</p>
+            <p className="state-panel-desc">
               New incidents from Telegram will appear here automatically.
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <div className="incident-grid">
             {incidents.map(incident => (
               <IncidentCard
                 key={incident.id}
                 incident={incident}
-                isDark={isDark}
                 onAccept={handleAccept}
                 accepting={acceptingId === incident.id}
               />
