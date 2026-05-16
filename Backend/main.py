@@ -108,7 +108,7 @@ async def create_incident(
             raise HTTPException(status_code=400, detail="Empty audio file.")
 
         filename = audio.filename or "report.ogg"
-        source = "web" if location else "telegram"
+        source = "telegram" if telegram_id else ("web" if location else "telegram")
 
         result = process_incident_audio(
             audio_bytes,
