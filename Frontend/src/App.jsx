@@ -1,130 +1,84 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useState, useEffect } from 'react'
+import Dashboard     from './components/Dashboard'
+import AudioRecorder from './components/AudioRecorder'
+import StatsBar      from './components/StatsBar'
+import { supabase, fetchIncidents, subscribeToIncidents } from './lib/supabase'
+import './index.css'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
-
+function Clock() {
+  const [t, setT] = useState(new Date())
+  useEffect(() => {
+    const id = setInterval(() => setT(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank" rel="noopener noreferrer">
-                <img className="logo" src={viteLogo} alt="Vite logo" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank" rel="noopener noreferrer">
-                <img className="button-icon" src={reactLogo} alt="React logo" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a
-                href="https://github.com/vitejs/vite"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank" rel="noopener noreferrer">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank" rel="noopener noreferrer">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a
-                href="https://bsky.app/profile/vite.dev"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <div className="header-clock">
+      {t.toLocaleDateString('en-GB', { day:'2-digit', month:'short' })}
+      &nbsp;·&nbsp;
+      {t.toLocaleTimeString('en-GB', { hour12: false })}
+    </div>
   )
 }
 
-export default App
+export default function App() {
+  const [incidents,   setIncidents]   = useState([])
+  const [liveStatus,  setLiveStatus]  = useState('connecting')
+
+  useEffect(() => {
+    fetchIncidents().then(data => setIncidents(data))
+
+    const ch = subscribeToIncidents(row =>
+      setIncidents(prev => [row, ...prev])
+    )
+
+    setLiveStatus('live')
+    return () => supabase.removeChannel(ch)
+  }, [])
+
+  return (
+    <div className="app">
+
+      {/* Header */}
+      <header className="header">
+        <div className="header-brand">
+          <div className="brand-mark">
+            <div className="brand-icon">
+              {/* Signal / waveform icon */}
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M1 7 Q2.5 3 4 7 Q5.5 11 7 7 Q8.5 3 10 7 Q11.5 11 13 7"
+                      stroke="#A8FF3E" strokeWidth="1.5"
+                      strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+              </svg>
+            </div>
+            <span className="brand-name">RESQNET</span>
+          </div>
+          <div className="brand-sep" />
+          <span className="brand-sub">Disaster Call Management</span>
+        </div>
+
+        <div className="header-right">
+          <div className={`signal-status ${liveStatus}`}>
+            <span className="signal-dot" />
+            {liveStatus === 'live' ? 'Signal Active' : 'Connecting...'}
+          </div>
+          <Clock />
+        </div>
+      </header>
+
+      {/* Telemetry bar */}
+      <StatsBar incidents={incidents} />
+
+      {/* Main */}
+      <div className="app-body">
+        <aside className="left-panel">
+          <AudioRecorder />
+        </aside>
+        <main className="right-panel">
+          <Dashboard incidents={incidents} />
+        </main>
+      </div>
+
+    </div>
+  )
+}
