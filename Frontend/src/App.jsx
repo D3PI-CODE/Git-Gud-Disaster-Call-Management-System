@@ -1,15 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import Dashboard      from './components/Dashboard'
-import AudioRecorder  from './components/AudioRecorder'
-import StatsBar       from './components/StatsBar'
+import AgentDashboard from './components/AgentDashboard'
 import Login          from './components/Login'
 import ProtectedRoute from './components/ProtectedRoute'
-import { fetchIncidents, clearAuthSession } from './lib/api'
+import { clearAuthSession } from './lib/api'
 import './index.css'
 import './App.css'
 
-/* ── Theme toggle button ────────────────────────────────── */
 export function ThemeToggle({ theme, onToggle }) {
   return (
     <button
@@ -42,122 +39,15 @@ export function ThemeToggle({ theme, onToggle }) {
   )
 }
 
-/* ── Clock ──────────────────────────────────────────────── */
-function Clock() {
-  const [t, setT] = useState(new Date())
-  useEffect(() => {
-    const id = setInterval(() => setT(new Date()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  return (
-    <div className="header-clock">
-      {t.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
-      &nbsp;·&nbsp;
-      {t.toLocaleTimeString('en-GB', { hour12: false })}
-    </div>
-  )
-}
-
-/* ── Agent dashboard ────────────────────────────────────── */
-function MainApp({ theme, onToggle }) {
-  const [incidents,  setIncidents]  = useState([])
-  const [liveStatus, setLiveStatus] = useState('connecting')
-  const [agentName,  setAgentName]  = useState('')
-
-  useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('resqnet_user') || '{}')
-    setAgentName(user.name || user.email?.split('@')[0] || 'Agent')
-
-    let cancelled = false
-
-    async function load() {
-      try {
-        const data = await fetchIncidents()
-        if (!cancelled) {
-          setIncidents(data)
-          setLiveStatus('live')
-        }
-      } catch {
-        if (!cancelled) setLiveStatus('offline')
-      }
-    }
-
-    load()
-    const id = setInterval(load, 5000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [])
-
+function MainApp() {
   function handleSignOut() {
     clearAuthSession()
     window.location.href = '/login'
   }
 
-  return (
-    <div className="app">
-
-      <header className="header">
-        <div className="header-brand">
-          <div className="brand-mark">
-            <div className="brand-icon">
-              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                <path
-                  d="M1 7 Q2.5 3 4 7 Q5.5 11 7 7 Q8.5 3 10 7 Q11.5 11 13 7"
-                  stroke="var(--accent)" strokeWidth="1.5"
-                  strokeLinecap="round" strokeLinejoin="round" fill="none"
-                />
-              </svg>
-            </div>
-            <span className="brand-name">RESQNET</span>
-          </div>
-          <div className="brand-sep" />
-          <span className="brand-sub">Disaster Call Management</span>
-        </div>
-
-        <div className="header-right">
-          {agentName && (
-            <div className="agent-pill">Agent: {agentName}</div>
-          )}
-          <div className={`signal-status ${liveStatus}`}>
-            <span className="signal-dot" />
-            {liveStatus === 'live'
-              ? 'Signal Active'
-              : liveStatus === 'offline'
-                ? 'Offline'
-                : 'Connecting...'}
-          </div>
-          <Clock />
-          <ThemeToggle theme={theme} onToggle={onToggle} />
-          <button className="signout-btn" onClick={handleSignOut}>
-            Sign Out
-          </button>
-        </div>
-      </header>
-
-      <StatsBar incidents={incidents} />
-
-      <div className="app-body">
-        <aside className="left-panel">
-          <AudioRecorder
-            onIncidentCreated={async () => {
-              const data = await fetchIncidents()
-              setIncidents(data)
-              setLiveStatus('live')
-            }}
-          />
-        </aside>
-        <main className="right-panel">
-          <Dashboard incidents={incidents} />
-        </main>
-      </div>
-
-    </div>
-  )
+  return <AgentDashboard onSignOut={handleSignOut} />
 }
 
-/* ── Root ───────────────────────────────────────────────── */
 export default function App() {
   const [theme, setTheme] = useState(
     () => localStorage.getItem('resqnet-theme') || 'dark'
@@ -181,7 +71,7 @@ export default function App() {
         path="/dashboard"
         element={
           <ProtectedRoute>
-            <MainApp theme={theme} onToggle={toggleTheme} />
+            <MainApp />
           </ProtectedRoute>
         }
       />
