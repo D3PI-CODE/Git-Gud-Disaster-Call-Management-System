@@ -32,7 +32,7 @@ export default function App() {
       setIncidents(prev => [row, ...prev])
     )
 
-    ch.subscribe(s => setLiveStatus(s === 'SUBSCRIBED' ? 'live' : 'connecting'))
+    setLiveStatus('live')
     return () => supabase.removeChannel(ch)
   }, [])
 
