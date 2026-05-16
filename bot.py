@@ -169,6 +169,67 @@ async def unexpected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "I was expecting a different response. Use /cancel to start over."
     )
 
+── /help ──────────────────────────────────────────────────
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+await update.message.reply_text(
+"📋 ResQNet Commands\n\n"
+"/report — Log a new emergency incident\n"
+"/status — Check your report status\n"
+"/cancel — Cancel current report\n"
+"/help — Show this message\n\n"
+"For life-threatening emergencies call 119 immediately.",
+parse_mode="Markdown"
+)
+
+── /status ────────────────────────────────────────────────
+async def check_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Expects: /status a3f9b21c
+args = context.args
+
+if not args:
+    await update.message.reply_text(
+        "Please provide your reference ID.\n"
+        "_Example: /status a3f9b21c_",
+        parse_mode="Markdown"
+    )
+    return
+
+ref_id = args[0].strip()
+
+try:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{API_URL}/incident/status/{ref_id}") as resp:
+            if resp.status == 404:
+                await update.message.reply_text(
+                    f"⚠️ No report found with ID `{ref_id}`.\n"
+                    "Check the ID and try again.",
+                    parse_mode="Markdown"
+                )
+                return
+
+            data = await resp.json()
+
+    STATUS_ICONS = {
+        "open":     "🟡 Open — awaiting agent",
+        "assigned": "🔵 Assigned — agent responding",
+        "resolved": "✅ Resolved",
+    }
+
+    priority = data.get("priority", "unknown")
+    status   = data.get("status",   "unknown")
+    PRIORITY_ICONS = {"critical":"🔴","high":"🟠","medium":"🟡","low":"🟢"}
+
+    await update.message.reply_text(
+        f"📋 *Report Status*\n\n"
+        f"Reference: `{ref_id}`\n"
+        f"Priority: {PRIORITY_ICONS.get(priority,'⚪')} {priority.upper()}\n"
+        f"Status: {STATUS_ICONS.get(status, status)}\n"
+        f"Logged at: {data.get('created_at','')[:16].replace('T',' ')} UTC",
+        parse_mode="Markdown"
+    )
+
+except Exception as e:
+    await update.message.reply_text("❌ Could not fetch status. Please try again.")
 # ── Main ───────────────────────────────────────────────────
 def main():
     app = Application.builder().token(TOKEN).build()
@@ -192,6 +253,9 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
+
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", check_status))
 
     print("ResQNet Telegram bot is running...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
