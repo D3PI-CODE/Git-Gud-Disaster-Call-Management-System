@@ -54,6 +54,8 @@ export default function AudioRecorder() {
       mediaRecorderRef.current = mr
       setStatus('recording')
     } catch (err) {
+      console.error('Failed to access microphone:', err)
+      setStatus('error')
       setErrorMsg('Microphone access denied. Please allow microphone access.')
     }
   }
