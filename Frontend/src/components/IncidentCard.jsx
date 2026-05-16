@@ -51,15 +51,25 @@ function parseActionItems(text) {
     .filter(Boolean)
 }
 
+function parseValidDate(dateStr) {
+  const date = new Date(dateStr)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 function timeAgo(dateStr) {
-  const diff = (Date.now() - new Date(dateStr)) / 1000
+  const date = parseValidDate(dateStr)
+  if (!date) return 'Unknown time'
+
+  const diff = (Date.now() - date.getTime()) / 1000
   if (diff < 60)  return `${Math.floor(diff)}s ago`
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function isNew(dateStr) {
-  return (Date.now() - new Date(dateStr)) / 1000 < 20
+  const date = parseValidDate(dateStr)
+  if (!date) return false
+  return (Date.now() - date.getTime()) / 1000 < 20
 }
 
 export default function IncidentCard({ incident }) {
