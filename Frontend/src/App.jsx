@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Dashboard      from './components/Dashboard'
 import AudioRecorder  from './components/AudioRecorder'
 import StatsBar       from './components/StatsBar'
@@ -65,13 +65,14 @@ function MainApp({ theme, onToggle }) {
   const [agentName,  setAgentName]  = useState('')
 
   useEffect(() => {
-    // Get agent name from localStorage (set during login)
+    // Get agent name from localStorage set during login
     const user = JSON.parse(localStorage.getItem('resqnet_user') || '{}')
     setAgentName(user.name || user.email?.split('@')[0] || 'Agent')
 
-    // Load incidents and subscribe to realtime
+    // Load incidents
     fetchIncidents().then(data => setIncidents(data))
 
+    // Subscribe to realtime new incidents
     const ch = subscribeToIncidents(row =>
       setIncidents(prev => [row, ...prev])
     )
@@ -154,22 +155,20 @@ export default function App() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark')
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route
-          path="/login"
-          element={<Login theme={theme} onToggle={toggleTheme} />}
-        />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <MainApp theme={theme} onToggle={toggleTheme} />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <Routes>
+      <Route
+        path="/login"
+        element={<Login theme={theme} onToggle={toggleTheme} />}
+      />
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute>
+            <MainApp theme={theme} onToggle={toggleTheme} />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
   )
 }
