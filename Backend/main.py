@@ -1,7 +1,16 @@
 import os
 from typing import Any, Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Query
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
@@ -20,6 +29,7 @@ from supabase_client import (
 )
 from priority import urgency_to_priority
 from auth_routes import router as auth_router
+from auth_guard import CurrentAgent, get_current_agent, resolve_agent_from_header
 
 app = FastAPI(title="Disaster Call Management System API")
 
@@ -47,24 +57,6 @@ app.add_middleware(
 TRIAGE_WEBHOOK_SECRET = os.getenv("TRIAGE_WEBHOOK_SECRET", "").strip()
 
 app.include_router(auth_router)
-
-
-def require_agent(authorization: Optional[str] = Header(default=None)):
-    if not supabase:
-        raise HTTPException(status_code=503, detail="Supabase is not configured")
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    token = authorization.removeprefix("Bearer ").strip()
-    try:
-        result = supabase.auth.get_user(token)
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid session") from e
-    if not result:
-        raise HTTPException(status_code=401, detail="Invalid session")
-    user = result.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid session")
-    return user
 
 
 async def _process_audio_upload(
@@ -103,9 +95,8 @@ async def process_audio(
     audio: Optional[UploadFile] = File(None),
     caller_name: str = Form("Unknown"),
     location: str = Form("Unknown"),
-    authorization: Optional[str] = Header(default=None),
+    _agent: CurrentAgent = Depends(get_current_agent),
 ):
-    require_agent(authorization)
     upload = audio or file
     if not upload:
         raise HTTPException(status_code=400, detail="Missing audio file")
@@ -149,8 +140,8 @@ def _authorize_triage(
     if TRIAGE_WEBHOOK_SECRET:
         if webhook_secret and webhook_secret == TRIAGE_WEBHOOK_SECRET:
             return
-        # fall back to agent Bearer auth
-        require_agent(authorization)
+        # fall back to agent Bearer auth (raises 401 on failure)
+        resolve_agent_from_header(authorization)
         return
     # open mode: no secret configured
     if not supabase:
@@ -244,9 +235,8 @@ async def process_incident(
     audio: UploadFile = File(...),
     caller_name: str = Form("Unknown"),
     location: str = Form("Unknown"),
-    authorization: Optional[str] = Header(default=None),
+    _agent: CurrentAgent = Depends(get_current_agent),
 ):
-    require_agent(authorization)
     try:
         return await _process_audio_upload(audio, caller_name, location)
     except Exception as e:
@@ -279,7 +269,7 @@ def list_incidents(
             " 'all' (default) -> unfiltered, intended for supervisors/audit."
         ),
     ),
-    authorization: Optional[str] = Header(default=None),
+    agent: CurrentAgent = Depends(get_current_agent),
 ):
     """Live feed for the agent dashboard.
 
@@ -287,16 +277,16 @@ def list_incidents(
     `IncidentCard.jsx` consumes (caller info, structured analysis, transcript,
     server-computed priority).
 
-    When `scope=mine` the response is constrained to:
+    When `scope=mine` (the default for the agent dashboard) the response is
+    constrained to:
       a) Cases that are PENDING and unassigned (claimable queue), AND
-      b) Cases that are IN_PROGRESS and assigned to the caller.
-    Cases assigned to OTHER agents are never returned in this mode.
+      b) Cases that are IN_PROGRESS and assigned to the JWT-resolved agent.
+    Cases assigned to OTHER agents are NEVER returned in this mode.
     """
-    user = require_agent(authorization)
     try:
         if scope == "mine":
             rows = fetch_agent_incidents(
-                agent_id=user.id,
+                agent_id=agent.agent_id,
                 limit=limit,
                 since=since,
             )
@@ -325,9 +315,13 @@ _CLAIM_ERROR_HTTP_STATUS = {
 @app.post("/api/incidents/{incident_id}/claim")
 def claim_incident_endpoint(
     incident_id: str,
-    authorization: Optional[str] = Header(default=None),
+    agent: CurrentAgent = Depends(get_current_agent),
 ):
-    """Atomically assign a PENDING incident to the calling agent.
+    """Atomically assign a PENDING incident to the JWT-resolved agent.
+
+    The `agent_id` written to `incidents.agent_id` is taken from the decoded
+    JWT (never from the request body), so a client cannot impersonate another
+    agent by hand-crafting the URL.
 
     Concurrency guarantee: this delegates to the `claim_incident()` PL/pgSQL
     function, which takes a `SELECT ... FOR UPDATE` row lock before checking
@@ -343,10 +337,17 @@ def claim_incident_endpoint(
     There is no time-of-check-to-time-of-use window: the lock is held for
     the entire status check + update, so it is impossible for two agents
     to both observe the row as claimable.
+
+    Response shape (used by the frontend to immediately update local state
+    so the agent doesn't need to refresh):
+        {
+          "status": "success",
+          "incident": <serialized incident with status=IN_PROGRESS,
+                       agent_id=<caller>>
+        }
     """
-    user = require_agent(authorization)
     try:
-        row = claim_incident(incident_id=incident_id, agent_id=user.id)
+        row = claim_incident(incident_id=incident_id, agent_id=agent.agent_id)
     except ClaimError as e:
         status_code = _CLAIM_ERROR_HTTP_STATUS.get(e.reason, 500)
         raise HTTPException(
@@ -369,10 +370,9 @@ def claim_incident_endpoint(
 @app.get("/api/incidents/{incident_id}")
 def get_incident(
     incident_id: str,
-    authorization: Optional[str] = Header(default=None),
+    _agent: CurrentAgent = Depends(get_current_agent),
 ):
     """Fetch a single incident by full UUID for detail views."""
-    require_agent(authorization)
     try:
         row = fetch_incident_by_id(incident_id)
     except Exception as e:

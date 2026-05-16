@@ -1,33 +1,55 @@
 import { attachAgentToken, supabase } from './supabaseClient'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+/**
+ * Auth tokens live in sessionStorage (NOT localStorage) so a JWT cannot
+ * outlive the browser tab it was issued in. Closing the tab or browser
+ * window forces a fresh login on the next visit, which:
+ *   - matches the requirement spec (session-scoped storage), and
+ *   - shrinks the blast radius of XSS exfiltration (a malicious script
+ *     loaded in a different tab cannot read this tab's token).
+ */
 const TOKEN_KEY = 'resqnet_token'
 const USER_KEY = 'resqnet_user'
 
 export function getAuthToken() {
-  return localStorage.getItem(TOKEN_KEY)
+  return sessionStorage.getItem(TOKEN_KEY)
 }
 
+/**
+ * Persist a freshly-issued Supabase session locally and propagate the JWT
+ * to the shared Supabase client so Realtime + PostgREST also authenticate
+ * as this agent for the remainder of the tab's lifetime.
+ *
+ * The backend's `_session_payload()` already exposes the agent UUID both
+ * inside `session.user.agent_id` AND at the top level as `session.agent_id`.
+ * We store `session.user` so downstream code can read `user.agent_id`
+ * without ever having to decode the JWT in the browser.
+ */
 export function setAuthSession(session) {
-  localStorage.setItem(TOKEN_KEY, session.access_token)
-  localStorage.setItem(USER_KEY, JSON.stringify(session.user))
-  // Propagate JWT to the shared Supabase client so Realtime + PostgREST
-  // both authenticate as the freshly-logged-in agent.
+  sessionStorage.setItem(TOKEN_KEY, session.access_token)
+  sessionStorage.setItem(USER_KEY, JSON.stringify(session.user))
   attachAgentToken(session.access_token)
 }
 
 export function clearAuthSession() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(USER_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(USER_KEY)
   supabase.realtime.setAuth(null)
 }
 
 export function getStoredUser() {
   try {
-    return JSON.parse(localStorage.getItem(USER_KEY) || 'null')
+    return JSON.parse(sessionStorage.getItem(USER_KEY) || 'null')
   } catch {
     return null
   }
+}
+
+/** Convenience accessor: the JWT-resolved agent UUID, or `null` if signed out. */
+export function getCurrentAgentId() {
+  return getStoredUser()?.agent_id ?? getStoredUser()?.id ?? null
 }
 
 /**

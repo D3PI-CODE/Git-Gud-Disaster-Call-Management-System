@@ -7,18 +7,29 @@ export default function ProtectedRoute({ children }) {
   const [status, setStatus] = useState('checking') // checking | ok | denied
 
   useEffect(() => {
-    const token = localStorage.getItem('resqnet_token')
+    // JWT lives in sessionStorage (tab-scoped). If the tab was just opened
+    // or the user signed out, there is no token and we bounce to /login.
+    const token = sessionStorage.getItem('resqnet_token')
 
     if (!token) {
       setStatus('denied')
       return
     }
 
-    // Verify token is still valid with the backend
     fetch(`${API_URL}/api/auth/session`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(res => setStatus(res.ok ? 'ok' : 'denied'))
+      .then(res => {
+        if (!res.ok) {
+          // Token was rejected by the backend (expired/revoked). Clear it so
+          // the next mount doesn't loop trying the same dead token.
+          sessionStorage.removeItem('resqnet_token')
+          sessionStorage.removeItem('resqnet_user')
+          setStatus('denied')
+          return
+        }
+        setStatus('ok')
+      })
       .catch(() => setStatus('denied'))
   }, [])
 

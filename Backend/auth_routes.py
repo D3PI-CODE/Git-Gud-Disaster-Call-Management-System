@@ -15,9 +15,10 @@ receives a JWT access_token + refresh_token, never a password or a hash.
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
+from auth_guard import CurrentAgent, get_current_agent
 from supabase_client import supabase
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -49,17 +50,27 @@ class AuthBody(BaseModel):
 
 
 def _session_payload(session, user):
-    """Shape the response sent back to the frontend. Never includes the password
-    or its hash."""
+    """Shape the response sent back to the frontend. Never includes the
+    plaintext password or its bcrypt hash.
+
+    The returned `access_token` is a Supabase-signed JWT whose `sub` claim
+    is the agent UUID — the same value used as `incidents.agent_id` and the
+    primary key of the `agents` table. We also surface that UUID explicitly
+    at the top level as `agent_id` so the frontend doesn't have to decode
+    the JWT itself in order to know who's logged in.
+    """
+    metadata = user.user_metadata or {}
     return {
         "access_token": session.access_token,
         "refresh_token": session.refresh_token,
         "expires_at": session.expires_at,
+        "agent_id": user.id,
         "user": {
             "id": user.id,
+            "agent_id": user.id,
             "email": user.email,
-            "name": (user.user_metadata or {}).get("name"),
-            "role": (user.user_metadata or {}).get("role", "agent"),
+            "name": metadata.get("name"),
+            "role": metadata.get("role", "agent"),
         },
     }
 
@@ -131,30 +142,17 @@ def agent_login(body: AuthBody):
 
 
 @router.get("/session")
-def agent_session(authorization: Optional[str] = Header(default=None)):
-    if not supabase:
-        raise HTTPException(status_code=503, detail="Supabase is not configured")
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
+def agent_session(agent: CurrentAgent = Depends(get_current_agent)):
+    """Validate the caller's JWT and echo back the decoded agent.
 
-    token = authorization.removeprefix("Bearer ").strip()
-    try:
-        result = supabase.auth.get_user(token)
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid session") from e
-
-    if not result:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    user = result.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
+    The frontend's `ProtectedRoute` hits this on mount to verify a stored
+    JWT is still valid before unlocking the dashboard.
+    """
     return {
         "user": {
-            "id": user.id,
-            "email": user.email,
-            "name": (user.user_metadata or {}).get("name"),
-            "role": (user.user_metadata or {}).get("role", "agent"),
+            "id": agent.agent_id,
+            "email": agent.email,
+            "name": agent.name,
+            "role": agent.role,
         }
     }

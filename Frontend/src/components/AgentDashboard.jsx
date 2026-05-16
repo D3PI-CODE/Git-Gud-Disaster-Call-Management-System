@@ -10,7 +10,13 @@ import {
   Radio,
 } from 'lucide-react'
 import { supabase, attachAgentToken } from '../lib/supabaseClient'
-import { claimIncident } from '../lib/api'
+import {
+  claimIncident,
+  fetchMyIncidents,
+  getAuthToken,
+  getCurrentAgentId,
+  getStoredUser,
+} from '../lib/api'
 
 const THEME_KEY = 'resqnet-theme'
 
@@ -53,11 +59,23 @@ function timeAgo(str) {
 }
 
 function getUser() {
-  try {
-    return JSON.parse(localStorage.getItem('resqnet_user') || '{}')
-  } catch {
-    return {}
-  }
+  return getStoredUser() || {}
+}
+
+/**
+ * The "mine" visibility predicate, mirrored client-side so realtime events
+ * are filtered against the exact same rule the backend's `fetch_agent_incidents`
+ * and the RLS policy enforce server-side:
+ *   (status = 'PENDING' AND agent_id IS NULL) OR agent_id = <me>
+ *
+ * Cards that don't match are silently dropped so a stray INSERT/UPDATE for
+ * a case assigned to a different agent can never leak onto this dashboard.
+ */
+function isVisibleToAgent(row, agentId) {
+  if (!row) return false
+  if (row.agent_id && agentId && row.agent_id === agentId) return true
+  if (row.status === 'PENDING' && !row.agent_id) return true
+  return false
 }
 
 const URGENCY_BORDER = {
@@ -134,19 +152,22 @@ function ThemeToggleButton({ isDark, onToggle }) {
   )
 }
 
-function StatsOverviewBar({ incidents, isDark }) {
-  const medical = incidents.filter(i => i.incident_type === 'MEDICAL').length
-  const disaster = incidents.filter(
-    i => i.incident_type === 'DISASTER' || !i.incident_type,
+function StatsOverviewBar({ incidents, agentId, isDark }) {
+  const pending = incidents.filter(
+    i => i.status === 'PENDING' && !i.agent_id,
   ).length
+  const mine = incidents.filter(
+    i => agentId && i.agent_id === agentId,
+  ).length
+  const medical = incidents.filter(i => i.incident_type === 'MEDICAL').length
   const critical = incidents.filter(
     i => urgencyTier(i.urgency_score) === 'critical',
   ).length
 
   const items = [
-    { label: 'Total Pending', value: incidents.length },
+    { label: 'Claimable', value: pending },
+    { label: 'My Active', value: mine },
     { label: 'Medical', value: medical },
-    { label: 'Disaster', value: disaster },
     { label: 'Critical', value: critical },
   ]
 
@@ -206,7 +227,7 @@ function StructuredTags({ data, isDark }) {
   )
 }
 
-function IncidentCard({ incident, isDark, onAccept, accepting }) {
+function IncidentCard({ incident, isDark, onAccept, accepting, isMine }) {
   const structured = parseStructured(incident.structured_data)
   const location = structured.location || 'Location unknown'
   const score = normalizeScore(incident.urgency_score)
@@ -214,6 +235,7 @@ function IncidentCard({ incident, isDark, onAccept, accepting }) {
   const isMedical = incident.incident_type === 'MEDICAL'
   const typeLabel = incident.incident_type || 'DISASTER'
   const transcript = incident.transcript || ''
+  const inProgress = incident.status === 'IN_PROGRESS'
 
   return (
     <article
@@ -227,24 +249,37 @@ function IncidentCard({ incident, isDark, onAccept, accepting }) {
     >
       <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6">
         <div className="flex items-start justify-between gap-3">
-          <span
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-['Chakra_Petch'] text-[10px] font-bold uppercase tracking-[0.12em] ${
-              isMedical
-                ? isDark
-                  ? 'bg-[#3D8BFF]/15 text-[#6BA3FF] ring-1 ring-[#3D8BFF]/25'
-                  : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
-                : isDark
-                  ? 'bg-[#FF7A00]/15 text-[#FF9F4D] ring-1 ring-[#FF7A00]/25'
-                  : 'bg-orange-50 text-orange-700 ring-1 ring-orange-200'
-            }`}
-          >
-            {isMedical ? (
-              <Stethoscope className="h-3 w-3" />
-            ) : (
-              <AlertTriangle className="h-3 w-3" />
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-['Chakra_Petch'] text-[10px] font-bold uppercase tracking-[0.12em] ${
+                isMedical
+                  ? isDark
+                    ? 'bg-[#3D8BFF]/15 text-[#6BA3FF] ring-1 ring-[#3D8BFF]/25'
+                    : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
+                  : isDark
+                    ? 'bg-[#FF7A00]/15 text-[#FF9F4D] ring-1 ring-[#FF7A00]/25'
+                    : 'bg-orange-50 text-orange-700 ring-1 ring-orange-200'
+              }`}
+            >
+              {isMedical ? (
+                <Stethoscope className="h-3 w-3" />
+              ) : (
+                <AlertTriangle className="h-3 w-3" />
+              )}
+              {typeLabel}
+            </span>
+            {isMine && inProgress && (
+              <span
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-['Chakra_Petch'] text-[10px] font-bold uppercase tracking-[0.12em] ${
+                  isDark
+                    ? 'bg-[#A8FF3E]/15 text-[#A8FF3E] ring-1 ring-[#A8FF3E]/30'
+                    : 'bg-[#84CC16]/15 text-[#65A30D] ring-1 ring-[#84CC16]/30'
+                }`}
+              >
+                Assigned to you
+              </span>
             )}
-            {typeLabel}
-          </span>
+          </div>
           <div className="shrink-0 text-right">
             <p
               className={`font-['Chakra_Petch'] text-[10px] font-semibold uppercase tracking-[0.14em] ${
@@ -309,25 +344,37 @@ function IncidentCard({ incident, isDark, onAccept, accepting }) {
       </div>
 
       <div className={`border-t p-4 ${isDark ? 'border-white/[0.06]' : 'border-slate-100'}`}>
-        <button
-          type="button"
-          disabled={accepting}
-          onClick={() => onAccept(incident)}
-          className={`flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3 font-['Chakra_Petch'] text-[11px] font-bold uppercase tracking-[0.2em] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-30 ${
-            isDark
-              ? 'border-[#A8FF3E]/30 bg-[#A8FF3E]/10 text-[#A8FF3E] hover:border-[#A8FF3E] hover:bg-[#A8FF3E] hover:text-[#1A1A1A] hover:shadow-[0_4px_24px_rgba(168,255,62,0.2)]'
-              : 'border-[#84CC16]/40 bg-[#84CC16]/10 text-[#65A30D] hover:border-[#84CC16] hover:bg-[#84CC16] hover:text-white hover:shadow-[0_4px_24px_rgba(132,204,22,0.25)]'
-          }`}
-        >
-          {accepting ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Accepting…
-            </>
-          ) : (
-            'Accept Case'
-          )}
-        </button>
+        {isMine && inProgress ? (
+          <div
+            className={`flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3 font-['Chakra_Petch'] text-[11px] font-bold uppercase tracking-[0.2em] ${
+              isDark
+                ? 'border-[#A8FF3E]/25 bg-[#A8FF3E]/5 text-[#A8FF3E]/80'
+                : 'border-[#84CC16]/30 bg-[#84CC16]/5 text-[#65A30D]/90'
+            }`}
+          >
+            In Progress · You
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={accepting}
+            onClick={() => onAccept(incident)}
+            className={`flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3 font-['Chakra_Petch'] text-[11px] font-bold uppercase tracking-[0.2em] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-30 ${
+              isDark
+                ? 'border-[#A8FF3E]/30 bg-[#A8FF3E]/10 text-[#A8FF3E] hover:border-[#A8FF3E] hover:bg-[#A8FF3E] hover:text-[#1A1A1A] hover:shadow-[0_4px_24px_rgba(168,255,62,0.2)]'
+                : 'border-[#84CC16]/40 bg-[#84CC16]/10 text-[#65A30D] hover:border-[#84CC16] hover:bg-[#84CC16] hover:text-white hover:shadow-[0_4px_24px_rgba(132,204,22,0.25)]'
+            }`}
+          >
+            {accepting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Accepting…
+              </>
+            ) : (
+              'Accept Case'
+            )}
+          </button>
+        )}
       </div>
     </article>
   )
@@ -344,6 +391,7 @@ export default function AgentDashboard({ onSignOut }) {
 
   const user = getUser()
   const agentName = user.name || user.email?.split('@')[0] || 'Agent'
+  const agentId = getCurrentAgentId()
   const initials = agentName
     .split(' ')
     .map(w => w[0])
@@ -351,17 +399,22 @@ export default function AgentDashboard({ onSignOut }) {
     .slice(0, 2)
     .toUpperCase()
 
-  // Initial backfill: fetch every row currently in PENDING so the dashboard
-  // is populated before the realtime stream takes over.
-  const loadPending = useCallback(async () => {
-    const { data, error: err } = await supabase
-      .from('incidents')
-      .select('*, users(name, contact_number)')
-      .eq('status', 'PENDING')
-      .order('urgency_score', { ascending: false })
-
-    if (err) throw err
-    return sortByUrgency(data ?? [])
+  /**
+   * Initial backfill via the BACKEND (not the anon Supabase client).
+   *
+   * `/api/incidents?scope=mine` decodes the JWT, extracts `agent_id`, and
+   * returns the union of:
+   *   a) PENDING incidents with no assignee (the claimable queue), AND
+   *   b) IN_PROGRESS incidents whose `agent_id` matches the JWT subject.
+   *
+   * Routing the load through the backend (rather than letting the browser
+   * hit PostgREST directly) means the visibility predicate is enforced
+   * server-side using the same code path as the RLS policy — there is no
+   * way for a tampered client to fetch another agent's in-progress cases.
+   */
+  const loadMine = useCallback(async () => {
+    const rows = await fetchMyIncidents()
+    return sortByUrgency(rows ?? [])
   }, [])
 
   useEffect(() => {
@@ -370,32 +423,35 @@ export default function AgentDashboard({ onSignOut }) {
     // Make sure the freshest JWT is attached to the singleton client
     // before we open the realtime socket. Without this, RLS-gated
     // postgres_changes events are filtered out silently.
-    const token = localStorage.getItem('resqnet_token')
+    const token = getAuthToken()
     if (token) attachAgentToken(token)
 
     /* ─── Realtime subscription ───────────────────────────────────────
      * Channel: 'schema-db-changes'
-     *   - INSERT on public.incidents WHERE status = 'PENDING'
-     *       -> append payload.new and re-sort by urgency_score DESC
+     *   - INSERT on public.incidents
+     *       -> if it's claimable (PENDING + unassigned) OR already
+     *          assigned to us, upsert it. Otherwise drop.
      *   - UPDATE on public.incidents
-     *       -> if status leaves PENDING, evict from state
-     *       -> else upsert the row and re-sort by urgency_score DESC
-     * The Supabase publication (ALTER PUBLICATION supabase_realtime
-     * ADD TABLE public.incidents) MUST exist or none of this fires.
+     *       -> re-check the visibility predicate; upsert if visible,
+     *          evict if not. This handles a case transitioning from
+     *          PENDING -> IN_PROGRESS (mine) as well as one assigned
+     *          to a different agent (must vanish).
+     *   - DELETE -> always evict by id.
+     *
+     * The Accept flow does NOT rely on this stream for correctness —
+     * the response from `claimIncident()` carries the canonical updated
+     * row and we apply it to local state immediately. Realtime is here
+     * to keep OTHER agents' dashboards in sync (e.g. when a new
+     * PENDING case lands or someone else claims one out from under us).
      * ──────────────────────────────────────────────────────────────── */
     const channel = supabase
       .channel('schema-db-changes')
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'incidents',
-          filter: 'status=eq.PENDING',
-        },
+        { event: 'INSERT', schema: 'public', table: 'incidents' },
         payload => {
           const row = payload?.new
-          if (!row?.id) return
+          if (!row?.id || !isVisibleToAgent(row, agentId)) return
           setIncidents(prev =>
             sortByUrgency([row, ...prev.filter(i => i.id !== row.id)]),
           )
@@ -407,7 +463,7 @@ export default function AgentDashboard({ onSignOut }) {
         payload => {
           const row = payload?.new
           if (!row?.id) return
-          if (row.status !== 'PENDING') {
+          if (!isVisibleToAgent(row, agentId)) {
             setIncidents(prev => prev.filter(i => i.id !== row.id))
             return
           }
@@ -426,7 +482,6 @@ export default function AgentDashboard({ onSignOut }) {
         },
       )
       .subscribe(status => {
-        console.log('Supabase Realtime Status changed:', status)
         if (cancelled) return
         if (status === 'SUBSCRIBED') setLiveStatus('live')
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT')
@@ -435,7 +490,7 @@ export default function AgentDashboard({ onSignOut }) {
       })
 
     // Kick off the initial backfill in parallel with channel subscription.
-    loadPending()
+    loadMine()
       .then(rows => {
         if (cancelled) return
         setIncidents(prev => {
@@ -456,37 +511,52 @@ export default function AgentDashboard({ onSignOut }) {
       cancelled = true
       supabase.removeChannel(channel)
     }
-  }, [loadPending])
+  }, [loadMine, agentId])
 
   /**
-   * Claim a PENDING incident for the current agent.
+   * Claim a PENDING incident for the JWT-resolved agent.
    *
-   * Concurrency: this hits the backend `POST /api/incidents/:id/claim`
-   * endpoint, which takes a row-level `FOR UPDATE` lock in Postgres before
-   * checking status + assignee. If two dashboards click "Accept" on the
-   * same card at roughly the same instant, exactly one request succeeds;
-   * the other comes back with a 409 + `reason: 'ALREADY_CLAIMED'`, and we
-   * drop the card from this dashboard immediately so the agent can move on.
+   * Bug-fix vs. the old behaviour: we now APPLY the backend's response to
+   * local state directly instead of waiting for the realtime UPDATE event.
+   * That was the root cause of "clicking Accept does nothing" — if the
+   * realtime socket hadn't finished authenticating (or RLS dropped the
+   * event), the card never disappeared and the UI looked broken even
+   * though the DB had been updated.
    *
-   * We don't optimistically remove the card on the happy path either — the
-   * realtime UPDATE handler does that as soon as Postgres confirms the
-   * status flip, which keeps every connected dashboard in sync.
+   * Concurrency: the backend takes a row-level `FOR UPDATE` lock in
+   * Postgres before touching the row, so concurrent Accept clicks across
+   * dashboards are serialized. The first wins, everyone else gets a 409
+   * with `detail.reason === 'ALREADY_CLAIMED'` and we evict the stale
+   * card from this dashboard.
    */
   async function handleAccept(incident) {
+    if (acceptingId) return
     setAcceptingId(incident.id)
     setError(null)
     try {
-      await claimIncident(incident.id)
+      const response = await claimIncident(incident.id)
+      const updated = response?.incident
+      if (updated?.id) {
+        setIncidents(prev =>
+          sortByUrgency([updated, ...prev.filter(i => i.id !== updated.id)]),
+        )
+      } else {
+        // Defensive fallback: backend returned 200 but no incident payload.
+        // Refetch the full scoped list so we don't leave a stale PENDING
+        // card on screen — the DB is the source of truth.
+        const rows = await loadMine()
+        setIncidents(rows)
+      }
     } catch (err) {
       if (err?.status === 409) {
-        // Another agent won the race. Evict the stale card locally; the
-        // realtime stream will eventually reconcile but we don't want the
-        // user clicking a dead button in the meantime.
+        // Another agent won the race. Drop the dead card immediately.
         setIncidents(prev => prev.filter(i => i.id !== incident.id))
         setError('Another agent claimed this case first.')
       } else if (err?.status === 404) {
         setIncidents(prev => prev.filter(i => i.id !== incident.id))
         setError('That case is no longer available.')
+      } else if (err?.status === 401) {
+        setError('Your session expired. Please sign in again.')
       } else {
         setError(err?.message || 'Failed to claim case')
       }
@@ -527,8 +597,8 @@ export default function AgentDashboard({ onSignOut }) {
                 isDark ? 'text-[#E0E0E0]/50' : 'text-slate-500'
               }`}
             >
-              <span className="hidden sm:inline">Active Pending Cases</span>
-              <span className="sm:hidden">Pending</span>
+              <span className="hidden sm:inline">Active Cases (Yours + Claimable)</span>
+              <span className="sm:hidden">Active</span>
             </p>
             <p
               className={`shrink-0 font-['Chakra_Petch'] text-xl font-bold tabular-nums ${
@@ -596,7 +666,11 @@ export default function AgentDashboard({ onSignOut }) {
         )}
 
         <section className="mb-6 sm:mb-8">
-          <StatsOverviewBar incidents={incidents} isDark={isDark} />
+          <StatsOverviewBar
+            incidents={incidents}
+            agentId={agentId}
+            isDark={isDark}
+          />
         </section>
 
         {loading ? (
@@ -652,6 +726,10 @@ export default function AgentDashboard({ onSignOut }) {
                 isDark={isDark}
                 onAccept={handleAccept}
                 accepting={acceptingId === incident.id}
+                isMine={
+                  !!agentId &&
+                  incident.agent_id === agentId
+                }
               />
             ))}
           </div>
