@@ -5,10 +5,7 @@ python-multipart
 supabase
 python-dotenv
 requests
-<<<<<<< HEAD
 groq
-=======
 google-generativeai
 email-validator
 psycopg2-binary
->>>>>>> 0fbdcb308709163887d01a4d690da9fee60cd0d0

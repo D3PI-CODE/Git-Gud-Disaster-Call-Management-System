@@ -13,8 +13,8 @@ import json
 import os
 from typing import Any
 
-from groq import Groq
 from dotenv import load_dotenv
+from groq import Groq
 
 load_dotenv()
 
@@ -49,9 +49,15 @@ def _parse_json_response(raw: str, source: str = "Groq") -> dict:
         raise RuntimeError(f"Failed to parse structured JSON from {source} response.") from exc
 
 
+def _require_client() -> Groq:
+    if not GROQ_API_KEY or client is None:
+        raise RuntimeError("GROQ_API_KEY is not configured. Add it to Backend/.env.")
+    return client
+
+
 def analyze_incident(
-    audio_bytes: bytes,        # accepted for API compatibility — not forwarded (text-only)
-    filename: str,             # accepted for API compatibility — not forwarded
+    audio_bytes: bytes,  # accepted for API compatibility — not forwarded (text-only)
+    filename: str,  # accepted for API compatibility — not forwarded
     valsea: dict[str, Any],
     *,
     caller_name_hint: str = "",
@@ -66,8 +72,8 @@ def analyze_incident(
     implementation but are not forwarded — Groq does not support audio input.
     All audio understanding is derived from VALSEA's clarified_transcript.
     """
-    if not GROQ_API_KEY or client is None:
-        raise RuntimeError("GROQ_API_KEY is not configured. Add it to Backend/.env.")
+    del audio_bytes, filename
+    groq_client = _require_client()
 
     clarified = valsea.get("clarified_transcript") or valsea.get("raw_transcript") or ""
 
@@ -116,7 +122,7 @@ Return ONLY a raw JSON object with exactly these keys:
 
 Prioritize life safety. Use VALSEA stress and urgency to inform priority and stress_level."""
 
-    response = client.chat.completions.create(
+    response = groq_client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -126,31 +132,34 @@ Prioritize life safety. Use VALSEA stress and urgency to inform priority and str
         response_format={"type": "json_object"},
     )
 
-    raw = response.choices[0].message.content
+    raw = response.choices[0].message.content or "{}"
     return _parse_json_response(raw)
 
 
 def extract_disaster_data(text: str) -> dict:
     """Legacy text-only extraction (kept for /api/process-audio compatibility)."""
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Gemini API key is not initialized.")
+    groq_client = _require_client()
 
-    model = genai.GenerativeModel(
-        GEMINI_MODEL,
-        generation_config={"response_mime_type": "application/json"},
+    system_prompt = (
+        "You are an emergency incident parser. "
+        "Return only raw JSON with no markdown or extra text."
     )
-
-    prompt = f"""
-    Analyze the following disaster call transcription and extract the information into strict JSON format.
-    The JSON must contain the following keys exactly:
-    - "content": A concise summary of the disaster or situation.
-    - "priority": The priority of the situation. Must be exactly one of "High", "Medium", or "Low".
-    - "language": The language the caller was speaking.
+    user_prompt = f"""Analyze the following disaster call transcription and extract strict JSON.
+Return ONLY a JSON object with exactly these keys:
+- "incident_type": exactly one of "MEDICAL" or "DISASTER"
+- "urgency_score": number from 0.0 to 1.0
+- "location": string, or "Unknown" if absent
+- "stress": number from 0.0 to 1.0
+- "frustration": number from 0.0 to 1.0
+- "sentiment": exactly one of "positive", "neutral", "negative"
+- "action_items": string containing a numbered list of suggested actions
+- "content": concise summary of the incident
 
 Transcription:
-\"{text}\""""
+"{text}"
+"""
 
-    response = client.chat.completions.create(
+    response = groq_client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -160,5 +169,5 @@ Transcription:
         response_format={"type": "json_object"},
     )
 
-    raw = response.choices[0].message.content
+    raw = response.choices[0].message.content or "{}"
     return _parse_json_response(raw)
