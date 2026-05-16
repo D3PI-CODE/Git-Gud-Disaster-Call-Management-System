@@ -45,7 +45,7 @@ def test_imports() -> bool:
     try:
         from pipeline import process_incident_audio  # noqa: F401
         from valsea import VALSEA_API_KEY  # noqa: F401
-        from gemini import GEMINI_API_KEY  # noqa: F401
+        from gemini import GROQ_API_KEY  # noqa: F401
 
         print("   OK — modules load")
         return True
@@ -56,7 +56,7 @@ def test_imports() -> bool:
 
 def test_env() -> bool:
     print("2. Environment check...")
-    from gemini import GEMINI_API_KEY
+    from gemini import GROQ_API_KEY
     from valsea import VALSEA_API_KEY
 
     ok = True
@@ -65,11 +65,11 @@ def test_env() -> bool:
         ok = False
     else:
         print("   OK — VALSEA_API_KEY set")
-    if not GEMINI_API_KEY:
-        print("   FAIL — GEMINI_API_KEY missing")
+    if not GROQ_API_KEY:
+        print("   FAIL — GROQ_API_KEY missing")
         ok = False
     else:
-        print("   OK — GEMINI_API_KEY set")
+        print("   OK — GROQ_API_KEY set")
     return ok
 
 
@@ -119,7 +119,7 @@ def test_valsea_only() -> bool:
 
 
 def test_gemini_only() -> bool:
-    print("5. Gemini analysis (needs valid GEMINI_API_KEY — ~10–30s)...")
+    print("5. Groq analysis (needs valid GROQ_API_KEY — ~10–30s)...")
     from gemini import analyze_incident
     from valsea import process_audio
 
@@ -135,24 +135,24 @@ def test_gemini_only() -> bool:
             incident_type="disaster",
             location_hint="Colombo",
         )
-        print("   OK — Gemini completed")
+        print("   OK — Groq analysis completed")
         print(f"   priority={data.get('priority')} caller={data.get('caller_name')}")
         return True
     except Exception as exc:
         err = str(exc)
-        if "404" in err and "models/" in err:
-            print("   FAIL — model not found. Set GEMINI_MODEL=gemini-2.0-flash in .env")
-        elif "leaked" in err.lower():
-            print("   FAIL — API key revoked (reported as leaked). Generate a new key in Google AI Studio.")
-        elif "quota" in err.lower() or "ResourceExhausted" in err:
-            print("   FAIL — Gemini quota exceeded. Enable billing or use a fresh API key.")
+        if "401" in err or "auth" in err.lower():
+            print("   FAIL — invalid GROQ_API_KEY. Check Backend/.env")
+        elif "429" in err or "quota" in err.lower() or "rate" in err.lower():
+            print("   FAIL — Groq rate limit hit. Try again later.")
+        elif "model" in err.lower():
+            print("   FAIL — model error. Check GROQ_MODEL in .env")
         else:
             print(f"   FAIL — {exc}")
         return False
 
 
 def test_pipeline_live() -> bool:
-    print("6. Full pipeline (VALSEA + Gemini — may take 60–120s)...")
+    print("6. Full pipeline (VALSEA + Groq — may take 60–120s)...")
     from pipeline import process_incident_audio
 
     audio_bytes, filename = _test_audio_bytes()

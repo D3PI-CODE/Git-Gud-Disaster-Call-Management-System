@@ -1,5 +1,10 @@
 """
-Gemini analysis: structured incident extraction using cleaned audio + VALSEA metrics.
+Groq text-only LLM integration for the ResQNet incident analysis pipeline.
+
+Drop-in replacement for the previous OpenRouter/Gemini-based implementation.
+Groq is text-only — audio understanding relies entirely on VALSEA's clarified
+transcript and prosody metrics. All function signatures and output keys are
+identical to the original so no changes are needed elsewhere in the codebase.
 """
 
 from __future__ import annotations
@@ -8,37 +13,45 @@ import json
 import os
 from typing import Any
 
-import google.generativeai as genai
+from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# Default to a current flash model; override via GEMINI_MODEL in .env
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+if GROQ_API_KEY:
+    client = Groq(api_key=GROQ_API_KEY)
 else:
-    print("Warning: GEMINI_API_KEY not set in .env")
+    print("Warning: GROQ_API_KEY not set in .env — LLM analysis will be unavailable.")
+    client = None
 
 
-def _mime_type(filename: str) -> str:
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    return {
-        "ogg": "audio/ogg",
-        "opus": "audio/ogg",
-        "webm": "audio/webm",
-        "wav": "audio/wav",
-        "mp3": "audio/mpeg",
-        "m4a": "audio/mp4",
-        "flac": "audio/flac",
-    }.get(ext, "audio/ogg")
+def _parse_json_response(raw: str, source: str = "Groq") -> dict:
+    """
+    Safely parse JSON from a model response.
+    Strips markdown fences (```json ... ```) that some models add.
+    Falls back gracefully on parse errors.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+    if text.endswith("```"):
+        text = text.rsplit("```", 1)[0]
+    text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        print(f"Error parsing {source} response: {exc}")
+        print(f"Raw response: {raw}")
+        raise RuntimeError(f"Failed to parse structured JSON from {source} response.") from exc
 
 
 def analyze_incident(
-    audio_bytes: bytes,
-    filename: str,
+    audio_bytes: bytes,        # accepted for API compatibility — not forwarded (text-only)
+    filename: str,             # accepted for API compatibility — not forwarded
     valsea: dict[str, Any],
     *,
     caller_name_hint: str = "",
@@ -47,21 +60,24 @@ def analyze_incident(
     location_hint: str = "",
 ) -> dict[str, Any]:
     """
-    Send denoised/clarified context and original audio to Gemini for structured analysis.
-    """
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Gemini API key is not initialized.")
+    Structured incident analysis using VALSEA transcript + voice metrics via Groq.
 
-    model = genai.GenerativeModel(
-        GEMINI_MODEL,
-        generation_config={"response_mime_type": "application/json"},
-    )
+    audio_bytes and filename are accepted for compatibility with the previous
+    implementation but are not forwarded — Groq does not support audio input.
+    All audio understanding is derived from VALSEA's clarified_transcript.
+    """
+    if not GROQ_API_KEY or client is None:
+        raise RuntimeError("GROQ_API_KEY is not configured. Add it to Backend/.env.")
 
     clarified = valsea.get("clarified_transcript") or valsea.get("raw_transcript") or ""
-    prompt = f"""You are an emergency dispatch analyst for ResQNet (Sri Lanka disaster management).
 
-Analyze the attached voice recording together with the VALSEA speech intelligence outputs below.
-The transcript has already been denoised/clarified by VALSEA.
+    system_prompt = (
+        "You are an emergency dispatch analyst for ResQNet (Sri Lanka disaster management). "
+        "You always respond with a raw JSON object only — no markdown, no code fences, no extra text."
+    )
+
+    user_prompt = f"""Analyze the incident report using the VALSEA speech intelligence outputs below.
+The transcript has already been denoised and clarified by VALSEA.
 
 Context from the reporting channel:
 - Submitted caller name (may be Telegram display name): {caller_name_hint or "unknown"}
@@ -81,8 +97,8 @@ VALSEA voice metrics (0.0–1.0 scales):
 VALSEA clarified transcript:
 \"\"\"{clarified}\"\"\"
 
-Return strict JSON with exactly these keys:
-- "caller_name": string — name stated by the caller in the audio; use submitted hint only if audio confirms or is silent
+Return ONLY a raw JSON object with exactly these keys:
+- "caller_name": string — name stated by the caller; use submitted hint only if transcript confirms or is silent
 - "location": string — place/area mentioned (city, district, landmark); "unknown" if not stated
 - "main_points": array of strings — 3–6 bullet points summarizing the emergency
 - "summary": string — one paragraph incident summary for dispatchers
@@ -96,48 +112,52 @@ Return strict JSON with exactly these keys:
 - "transcript": string — best transcript of what the caller said (prefer clarified text)
 - "action_items": string — numbered list of recommended dispatcher actions (e.g. "1. Send ambulance\\n2. ...")
 - "language": string — primary language spoken
-- "incident_type": string — refine "disaster" or "medical" if the audio indicates otherwise
+- "incident_type": string — refine the incident type if the transcript indicates otherwise
 
 Prioritize life safety. Use VALSEA stress and urgency to inform priority and stress_level."""
 
-    mime = _mime_type(filename)
-    parts: list[Any] = [
-        {"mime_type": mime, "data": audio_bytes},
-        prompt,
-    ]
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        response_format={"type": "json_object"},
+    )
 
-    response = model.generate_content(parts)
-
-    try:
-        data = json.loads(response.text)
-    except json.JSONDecodeError as exc:
-        print(f"Error parsing Gemini response: {exc}")
-        print(f"Raw response: {response.text}")
-        raise RuntimeError("Failed to parse structured JSON from Gemini response.") from exc
-
-    return data
+    raw = response.choices[0].message.content
+    return _parse_json_response(raw)
 
 
 def extract_disaster_data(text: str) -> dict:
     """Legacy text-only extraction (kept for /api/process-audio compatibility)."""
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Gemini API key is not initialized.")
+    if not GROQ_API_KEY or client is None:
+        raise RuntimeError("GROQ_API_KEY is not configured. Add it to Backend/.env.")
 
-    model = genai.GenerativeModel(
-        GEMINI_MODEL,
-        generation_config={"response_mime_type": "application/json"},
+    system_prompt = (
+        "You are a disaster call analyst. "
+        "You always respond with a raw JSON object only — no markdown, no code fences, no extra text."
     )
 
-    prompt = f"""
-    Analyze the following disaster call transcription and extract the information into strict JSON format.
-    The JSON must contain the following keys exactly:
-    - "content": A concise summary of the disaster or situation.
-    - "priority": The priority of the situation. Must be exactly one of "High", "Medium", or "Low".
-    - "language": The language the caller was speaking.
+    user_prompt = f"""Analyze the following disaster call transcription and extract information as a JSON object.
+The JSON must contain exactly these keys:
+- "content": A concise summary of the disaster or situation.
+- "priority": The priority of the situation. Must be exactly one of "High", "Medium", or "Low".
+- "language": The language the caller was speaking.
 
-    Transcription:
-    "{text}"
-    """
+Transcription:
+\"{text}\""""
 
-    response = model.generate_content(prompt)
-    return json.loads(response.text)
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        response_format={"type": "json_object"},
+    )
+
+    raw = response.choices[0].message.content
+    return _parse_json_response(raw)

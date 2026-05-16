@@ -4,4 +4,4 @@ python-multipart
 supabase
 python-dotenv
 requests
-google-generativeai
+groq
