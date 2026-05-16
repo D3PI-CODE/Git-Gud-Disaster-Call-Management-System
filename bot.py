@@ -32,12 +32,7 @@ logger = logging.getLogger(__name__)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to *ResQNet Disaster Reporting Bot*\n\n"
-        "If you are in danger, use /report and send one voice message.\n\n"
-        "In your voice message, clearly say:\n"
-        "1. Your name\n"
-        "2. Your contact number\n"
-        "3. Your location\n"
-        "4. What happened and your current situation\n\n"
+        "Use /report to send a disaster report using a voice message.\n\n"
         "For life-threatening emergencies, contact emergency services immediately.",
         parse_mode="Markdown",
     )
@@ -45,11 +40,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📋 *Available Commands*\n\n"
+        "📋 *Commands*\n\n"
         "/start - Start the bot\n"
-        "/report - Send a disaster report\n"
+        "/report - Send a disaster voice report\n"
         "/cancel - Cancel current report\n"
-        "/help - Show help message",
+        "/help - Show help",
         parse_mode="Markdown",
     )
 
@@ -59,13 +54,13 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🚨 *New Disaster Report*\n\n"
         "Please send *one voice message* including:\n\n"
         "1. Your name\n"
-        "2. Contact number\n"
-        "3. Location\n"
-        "4. Current situation\n\n"
+        "2. Your contact number\n"
+        "3. Your location\n"
+        "4. What happened / your current situation\n\n"
         "Example:\n"
         "_My name is Nimal. My number is 0771234567. "
         "I am near Kandy railway station. There is flooding and two people are trapped._\n\n"
-        "Please record and send your voice message now.",
+        "Now please hold the microphone button and send your voice message.",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -76,13 +71,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def received_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     voice = update.message.voice
 
-    if not voice:
-        await update.message.reply_text(
-            "⚠️ I did not receive a voice message.\n"
-            "Please hold the microphone button and send a voice recording."
-        )
-        return ASK_VOICE
-
     if voice.duration and voice.duration > MAX_VOICE_DURATION_SEC:
         await update.message.reply_text(
             f"⚠️ Your voice message is too long.\n"
@@ -91,7 +79,7 @@ async def received_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_VOICE
 
     processing_message = await update.message.reply_text(
-        "⏳ Report received. Analysing your voice message now..."
+        "⏳ Voice message received. Sending it for transcription and analysis..."
     )
 
     try:
@@ -128,7 +116,7 @@ async def received_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         incident_id = str(data.get("id", "N/A"))
         priority = str(data.get("priority", "unknown")).upper()
         transcript = data.get("transcript", "Transcript not available.")
-        extracted_name = data.get("name", "Not detected")
+        name = data.get("name", "Not detected")
         contact_number = data.get("contact_number", "Not detected")
         location = data.get("location", "Not detected")
         situation = data.get("situation", "Not detected")
@@ -137,12 +125,11 @@ async def received_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ *Disaster report submitted successfully*\n\n"
             f"*Reference ID:* `{incident_id}`\n"
             f"*Priority:* {priority}\n\n"
-            f"*Name:* {extracted_name}\n"
+            f"*Name:* {name}\n"
             f"*Contact:* {contact_number}\n"
             f"*Location:* {location}\n"
             f"*Situation:* {situation}\n\n"
-            f"*Transcript:*\n_{transcript}_\n\n"
-            "Rescue/response team will review this report.",
+            f"*Transcript:*\n_{transcript}_",
             parse_mode="Markdown",
         )
 
@@ -150,9 +137,8 @@ async def received_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error while processing voice report: {error}")
 
         await processing_message.edit_text(
-            "❌ Sorry, something went wrong while processing your report.\n\n"
-            "Please try again using /report.\n"
-            "If this is an emergency, contact emergency services directly."
+            "❌ Something went wrong while processing your voice report.\n\n"
+            "Please try again using /report."
         )
 
     return ConversationHandler.END
@@ -160,8 +146,13 @@ async def received_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def received_wrong_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚠️ Please send a *voice message*, not text/image/video.\n\n"
-        "In the voice message, say your name, contact number, location, and situation.",
+        "⚠️ I can only process voice reports for emergency cases.\n\n"
+        "Please tap and hold the microphone button, then clearly say:\n"
+        "• your name\n"
+        "• contact number\n"
+        "• exact location\n"
+        "• what happened and who needs help\n\n"
+        "After recording, send the voice message here.",
         parse_mode="Markdown",
     )
 
@@ -179,9 +170,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TOKEN:
-        raise ValueError(
-            "TELEGRAM_TOKEN is missing. Add it to your .env file."
-        )
+        raise ValueError("TELEGRAM_TOKEN is missing in your .env file.")
 
     app = Application.builder().token(TOKEN).build()
 
@@ -206,4 +195,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
