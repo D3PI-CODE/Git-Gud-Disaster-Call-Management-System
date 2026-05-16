@@ -5,6 +5,6 @@ python-multipart
 supabase
 python-dotenv
 requests
-google-generativeai
+groq
 email-validator
 psycopg2-binary

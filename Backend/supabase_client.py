@@ -181,7 +181,7 @@ def serialize_incident(row):
     if row is None:
         return None
 
-    structured: dict[str, Any] = dict(row.get("structured_data") or {})
+    structured: dict[str, Any] = (row.get("structured_data") or {}).copy()
     structured.setdefault("location", "Unknown")
     structured.setdefault("caller_name", "Unknown Caller")
     structured.setdefault("stress", 0)
@@ -192,6 +192,8 @@ def serialize_incident(row):
 
     raw_users = row.get("users")
     users = raw_users if isinstance(raw_users, dict) else None
+    urgency_score = row.get("urgency_score")
+    incident_type = row.get("incident_type")
 
     return {
         "id": row.get("id"),
@@ -205,7 +207,7 @@ def serialize_incident(row):
         "structured_data": structured,
         "users": users,
         "priority": urgency_to_priority(
-            row.get("urgency_score"),
-            row.get("incident_type"),
+            urgency_score if isinstance(urgency_score, (int, float)) else None,
+            incident_type if isinstance(incident_type, str) else None,
         ),
     }

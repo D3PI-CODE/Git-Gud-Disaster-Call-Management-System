@@ -1,20 +1,21 @@
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Query
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from valsea import transcribe_audio
+from auth_routes import router as auth_router
 from gemini import extract_disaster_data
+from pipeline import process_incident_audio
+from priority import urgency_to_priority
 from supabase_client import (
-    insert_incident,
-    fetch_incidents,
     fetch_incident_by_id,
+    fetch_incidents,
+    insert_incident,
     serialize_incident,
     supabase,
 )
-from priority import urgency_to_priority
-from auth_routes import router as auth_router
+from valsea import ValseaError, transcribe_audio
 
 app = FastAPI(title="Disaster Call Management System API")
 
@@ -53,9 +54,14 @@ async def _process_audio_upload(
     location: str = "Unknown",
 ):
     audio_bytes = await audio.read()
-    transcription = transcribe_audio(audio_bytes)
-    extracted_data = extract_disaster_data(transcription)
-    extracted_data["transcript"] = transcription
+    transcription_payload = transcribe_audio(audio_bytes, audio.filename or "audio.wav")
+    text = (
+        transcription_payload.get("clarified_text")
+        or transcription_payload.get("text")
+        or ""
+    )
+    extracted_data = extract_disaster_data(text)
+    extracted_data["transcript"] = text
     extracted_data["caller_name"] = caller_name
     extracted_data["location"] = location
 
@@ -70,7 +76,7 @@ async def _process_audio_upload(
         "priority": priority,
         "message": "Audio processed and data saved successfully.",
         "data": {
-            "transcription": transcription,
+            "transcription": text,
             "extracted_data": extracted_data,
             "db_response": db_response,
         },
@@ -91,22 +97,54 @@ async def process_audio(
         raise HTTPException(status_code=400, detail="Missing audio file")
     try:
         return await _process_audio_upload(upload, caller_name, location)
+    except ValseaError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/incident")
-async def process_incident(
+async def create_incident(
     audio: UploadFile = File(...),
     caller_name: str = Form("Unknown"),
-    location: str = Form("Unknown"),
-    authorization: Optional[str] = Header(default=None),
+    contact_number: str = Form(""),
+    telegram_id: str = Form(""),
+    incident_type: str = Form("disaster"),
+    location: str = Form(""),
 ):
-    require_agent(authorization)
     try:
-        return await _process_audio_upload(audio, caller_name, location)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        audio_bytes = await audio.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file.")
+
+        filename = audio.filename or "report.ogg"
+        source = "telegram" if telegram_id else ("web" if location else "telegram")
+
+        result = process_incident_audio(
+            audio_bytes,
+            filename,
+            caller_name_hint=caller_name,
+            contact_number=contact_number,
+            telegram_id=telegram_id,
+            incident_type=incident_type,
+            location_hint=location,
+            source=source,
+        )
+
+        return {
+            "id": result["id"],
+            "priority": result["priority"],
+            "status": "open",
+            "record": result["record"],
+            "analysis": {
+                "valsea": result["valsea"],
+                "gemini": result["gemini"],
+            },
+        }
+    except ValseaError as exc:
+        raise HTTPException(status_code=502, detail=f"VALSEA processing failed: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/incidents")
