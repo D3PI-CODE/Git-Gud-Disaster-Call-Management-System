@@ -1,0 +1,101 @@
+# ================================
+# OS
+# ================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# ================================
+# Environment & secrets (any path in repo)
+# ================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# Virtual environments (root, Backend/, etc.)
+.venv/
+venv/
+env/
+ENV/
+
+# Python build artifacts
+dist/
+build/
+
+# ================================
+# Node / Frontend
+# ================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Vite / bundler
+dist/
+dist-ssr/
+*.local
+.vite/
+.eslintcache
+*.tsbuildinfo
+
+# ================================
+# Editors & IDE
+# ================================
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*~
+
+# VS Code & Cursor (local / machine-specific)
+.vscode/
+.cursor/
+
+# ================================
+# Logs & temp
+# ================================
+logs/
+*.log
+.cache/
+tmp/
+temp/
+
+# ================================
+# Docker local overrides
+# ================================
+*.env.docker
+docker-compose.override.yml

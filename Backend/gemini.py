@@ -131,9 +131,14 @@ def extract_disaster_data(text: str) -> dict:
     prompt = f"""
     Analyze the following disaster call transcription and extract the information into strict JSON format.
     The JSON must contain the following keys exactly:
+    - "incident_type": Must be exactly one of "MEDICAL" or "DISASTER".
+    - "urgency_score": A float between 0.0 and 1.0 indicating urgency.
+    - "location": An estimated location of the incident, or "Unknown" if not mentioned.
+    - "stress": A float between 0.0 and 1.0 indicating caller stress level.
+    - "frustration": A float between 0.0 and 1.0 indicating caller frustration.
+    - "sentiment": Must be exactly one of "positive", "neutral", or "negative".
+    - "action_items": A short string containing a numbered list of suggested actions.
     - "content": A concise summary of the disaster or situation.
-    - "priority": The priority of the situation. Must be exactly one of "High", "Medium", or "Low".
-    - "language": The language the caller was speaking.
 
     Transcription:
     "{text}"

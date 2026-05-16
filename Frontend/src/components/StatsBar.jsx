@@ -1,8 +1,18 @@
+function incidentPriority(incident) {
+  if (incident.priority) return incident.priority
+  const score = incident.urgency_score ?? 0
+  if (incident.incident_type === 'MEDICAL' || score >= 0.8) return 'critical'
+  if (score >= 0.6) return 'high'
+  if (score >= 0.4) return 'medium'
+  return 'low'
+}
+
 export default function StatsBar({ incidents }) {
   const c = incidents.reduce(
     (a, i) => {
       a.total++
-      if (i.priority) a[i.priority] = (a[i.priority] ?? 0) + 1
+      const p = incidentPriority(i)
+      a[p] = (a[p] ?? 0) + 1
       return a
     },
     { total: 0, critical: 0, high: 0, medium: 0, low: 0 }
