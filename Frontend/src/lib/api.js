@@ -30,6 +30,21 @@ export function getStoredUser() {
   }
 }
 
+/**
+ * Error thrown by `apiFetch` on non-2xx responses. We attach the HTTP
+ * `status` and the parsed `detail` payload so call sites can branch on
+ * structured failures (e.g. claim collisions return 409 with
+ * `{ reason: 'ALREADY_CLAIMED', message }`) without having to string-match.
+ */
+export class ApiError extends Error {
+  constructor(message, { status, detail } = {}) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
 async function apiFetch(path, options = {}) {
   const headers = { ...(options.headers || {}) }
   const token = getAuthToken()
@@ -39,8 +54,12 @@ async function apiFetch(path, options = {}) {
   const data = await res.json().catch(() => ({}))
 
   if (!res.ok) {
-    const msg = data.detail || data.message || `Request failed (${res.status})`
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    const detail = data.detail ?? data.message
+    const msg =
+      (detail && typeof detail === 'object' && detail.message) ||
+      (typeof detail === 'string' ? detail : null) ||
+      `Request failed (${res.status})`
+    throw new ApiError(msg, { status: res.status, detail })
   }
   return data
 }
@@ -71,6 +90,37 @@ export async function getSession() {
 
 export async function fetchIncidents() {
   return apiFetch('/api/incidents')
+}
+
+/**
+ * Fetch the incidents visible to the currently logged-in agent:
+ *   - PENDING incidents with no assignee (claimable queue), AND
+ *   - IN_PROGRESS incidents assigned to *this* agent.
+ * Cases in progress for OTHER agents are intentionally hidden by the
+ * backend and never reach the client.
+ */
+export async function fetchMyIncidents() {
+  return apiFetch('/api/incidents?scope=mine')
+}
+
+/**
+ * Attempt to claim a PENDING incident for the logged-in agent.
+ *
+ * Race semantics: the backend takes a row-level `FOR UPDATE` lock on the
+ * incident before touching it, so concurrent claim attempts from multiple
+ * agents are serialized by Postgres. Exactly one wins; everyone else
+ * receives a 409 with `detail.reason === 'ALREADY_CLAIMED'`.
+ *
+ * Throws an `ApiError` on failure. Inspect `err.status` / `err.detail.reason`
+ * to distinguish:
+ *   - 409 ALREADY_CLAIMED      -> another agent grabbed it first
+ *   - 404 INCIDENT_NOT_FOUND   -> bad id (was deleted?)
+ *   - 403 AGENT_NOT_REGISTERED -> session is for a non-agent account
+ */
+export async function claimIncident(incidentId) {
+  return apiFetch(`/api/incidents/${encodeURIComponent(incidentId)}/claim`, {
+    method: 'POST',
+  })
 }
 
 export async function processAudio(blob, { caller_name, location }) {

@@ -9,9 +9,12 @@ import uvicorn
 from valsea import transcribe_audio
 from gemini import extract_disaster_data
 from supabase_client import (
+    ClaimError,
     insert_incident,
     fetch_incidents,
+    fetch_agent_incidents,
     fetch_incident_by_id,
+    claim_incident,
     serialize_incident,
     supabase,
 )
@@ -267,6 +270,15 @@ def list_incidents(
         default=None,
         description="ISO timestamp; return only incidents created after this time",
     ),
+    scope: Optional[str] = Query(
+        default=None,
+        pattern="^(mine|all)$",
+        description=(
+            "'mine' -> return only PENDING+unassigned cases plus the caller's"
+            " own IN_PROGRESS cases (the agent dashboard view)."
+            " 'all' (default) -> unfiltered, intended for supervisors/audit."
+        ),
+    ),
     authorization: Optional[str] = Header(default=None),
 ):
     """Live feed for the agent dashboard.
@@ -274,21 +286,84 @@ def list_incidents(
     Returns a list of incidents normalized into the exact shape the frontend's
     `IncidentCard.jsx` consumes (caller info, structured analysis, transcript,
     server-computed priority).
+
+    When `scope=mine` the response is constrained to:
+      a) Cases that are PENDING and unassigned (claimable queue), AND
+      b) Cases that are IN_PROGRESS and assigned to the caller.
+    Cases assigned to OTHER agents are never returned in this mode.
     """
-    require_agent(authorization)
+    user = require_agent(authorization)
     try:
-        rows = fetch_incidents(
-            status=status,
-            incident_type=incident_type,
-            limit=limit,
-            since=since,
-        )
+        if scope == "mine":
+            rows = fetch_agent_incidents(
+                agent_id=user.id,
+                limit=limit,
+                since=since,
+            )
+        else:
+            rows = fetch_incidents(
+                status=status,
+                incident_type=incident_type,
+                limit=limit,
+                since=since,
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     return [serialize_incident(row) for row in rows]
+
+
+_CLAIM_ERROR_HTTP_STATUS = {
+    "ALREADY_CLAIMED": 409,
+    "INCIDENT_NOT_FOUND": 404,
+    "AGENT_NOT_REGISTERED": 403,
+}
+
+
+@app.post("/api/incidents/{incident_id}/claim")
+def claim_incident_endpoint(
+    incident_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Atomically assign a PENDING incident to the calling agent.
+
+    Concurrency guarantee: this delegates to the `claim_incident()` PL/pgSQL
+    function, which takes a `SELECT ... FOR UPDATE` row lock before checking
+    the status / agent_id guard. If two agents POST here simultaneously for
+    the same `incident_id`, Postgres serializes them through that lock:
+      - The first transaction to acquire the lock flips the row to
+        IN_PROGRESS and commits -> returns 200 with the updated incident.
+      - The second transaction wakes up, observes the row is no longer
+        PENDING+unassigned, and the function raises ALREADY_CLAIMED ->
+        we return 409 here. The losing agent's dashboard then drops the
+        card via the realtime UPDATE/DELETE handler.
+
+    There is no time-of-check-to-time-of-use window: the lock is held for
+    the entire status check + update, so it is impossible for two agents
+    to both observe the row as claimable.
+    """
+    user = require_agent(authorization)
+    try:
+        row = claim_incident(incident_id=incident_id, agent_id=user.id)
+    except ClaimError as e:
+        status_code = _CLAIM_ERROR_HTTP_STATUS.get(e.reason, 500)
+        raise HTTPException(
+            status_code=status_code,
+            detail={"reason": e.reason, "message": e.message},
+        ) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # Re-fetch through fetch_incident_by_id so the response includes the
+    # joined `users(name, contact_number)` block and the normalized shape
+    # the dashboard expects.
+    enriched = fetch_incident_by_id(row.get("id")) or row
+    return {
+        "status": "success",
+        "incident": serialize_incident(enriched),
+    }
 
 
 @app.get("/api/incidents/{incident_id}")

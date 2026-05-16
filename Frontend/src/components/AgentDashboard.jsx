@@ -10,6 +10,7 @@ import {
   Radio,
 } from 'lucide-react'
 import { supabase, attachAgentToken } from '../lib/supabaseClient'
+import { claimIncident } from '../lib/api'
 
 const THEME_KEY = 'resqnet-theme'
 
@@ -457,18 +458,41 @@ export default function AgentDashboard({ onSignOut }) {
     }
   }, [loadPending])
 
+  /**
+   * Claim a PENDING incident for the current agent.
+   *
+   * Concurrency: this hits the backend `POST /api/incidents/:id/claim`
+   * endpoint, which takes a row-level `FOR UPDATE` lock in Postgres before
+   * checking status + assignee. If two dashboards click "Accept" on the
+   * same card at roughly the same instant, exactly one request succeeds;
+   * the other comes back with a 409 + `reason: 'ALREADY_CLAIMED'`, and we
+   * drop the card from this dashboard immediately so the agent can move on.
+   *
+   * We don't optimistically remove the card on the happy path either — the
+   * realtime UPDATE handler does that as soon as Postgres confirms the
+   * status flip, which keeps every connected dashboard in sync.
+   */
   async function handleAccept(incident) {
     setAcceptingId(incident.id)
     setError(null)
-    const { error: err } = await supabase
-      .from('incidents')
-      .update({ status: 'IN_PROGRESS', agent_id: user.id || null })
-      .eq('id', incident.id)
-    if (err) setError(err.message)
-    // Note: we don't optimistically remove here — the realtime UPDATE
-    // handler will evict the row as soon as Postgres confirms the change,
-    // which keeps every connected dashboard in sync.
-    setAcceptingId(null)
+    try {
+      await claimIncident(incident.id)
+    } catch (err) {
+      if (err?.status === 409) {
+        // Another agent won the race. Evict the stale card locally; the
+        // realtime stream will eventually reconcile but we don't want the
+        // user clicking a dead button in the meantime.
+        setIncidents(prev => prev.filter(i => i.id !== incident.id))
+        setError('Another agent claimed this case first.')
+      } else if (err?.status === 404) {
+        setIncidents(prev => prev.filter(i => i.id !== incident.id))
+        setError('That case is no longer available.')
+      } else {
+        setError(err?.message || 'Failed to claim case')
+      }
+    } finally {
+      setAcceptingId(null)
+    }
   }
 
   const shell = useMemo(
