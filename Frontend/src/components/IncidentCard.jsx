@@ -1,8 +1,12 @@
 import { useState } from 'react'
 
-const PRIORITY_ICONS = { critical: '●', high: '●', medium: '●', low: '●' }
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+const PRIORITY_ICONS = { critical: '●', high: '●', medium: '●', low: '●' }
 const SENTIMENT_ICONS = { positive: '↑', neutral: '→', negative: '↓' }
+
+const STATUS_NEXT = { open: 'assigned', assigned: 'resolved', resolved: 'open' }
+const STATUS_LABEL = { open: 'Mark Assigned', assigned: 'Mark Resolved', resolved: 'Re-open' }
 
 function ScoreBar({ label, value = 0, type }) {
   const pct = Math.round((value ?? 0) * 100)
@@ -32,10 +36,7 @@ function Section({ title, children, defaultOpen = false }) {
 
 function parseActions(text) {
   if (!text) return []
-  return text
-    .split(/\n|(?=\d+\.\s)/)
-    .map(s => s.replace(/^\d+\.\s*/, '').trim())
-    .filter(Boolean)
+  return text.split(/\n|(?=\d+\.\s)/).map(s => s.replace(/^\d+\.\s*/, '').trim()).filter(Boolean)
 }
 
 function timeAgo(str) {
@@ -49,23 +50,36 @@ function isNew(str) { return (Date.now() - new Date(str)) / 1000 < 20 }
 
 export default function IncidentCard({ incident }) {
   const {
-    priority    = 'low',
-    caller_name,
-    location,
-    created_at,
-    urgency     = 0,
-    stress      = 0,
-    frustration = 0,
-    sentiment,
-    transcript,
-    action_items,
+    id, priority = 'low',
+    caller_name, location, created_at,
+    urgency = 0, stress = 0, frustration = 0,
+    sentiment, transcript, action_items,
+    incident_type, status: initialStatus = 'open',
   } = incident
+
+  const [status,   setStatus]   = useState(initialStatus)
+  const [updating, setUpdating] = useState(false)
+
+  async function updateStatus(newStatus) {
+    setUpdating(true)
+    try {
+      await fetch(`${API_URL}/incident/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      })
+      setStatus(newStatus)
+    } catch (e) {
+      console.error('Status update failed:', e)
+    }
+    setUpdating(false)
+  }
 
   const actions = parseActions(action_items)
 
   return (
     <div className={`card ${priority}`}>
-      <div className="card-top" />
+      <div className="card-stripe" />
       <div className="card-inner">
 
         {/* Header */}
@@ -82,9 +96,16 @@ export default function IncidentCard({ incident }) {
             </div>
           </div>
 
-          <div className={`p-badge ${priority}`}>
-            <span style={{ fontSize: 7 }}>{PRIORITY_ICONS[priority]}</span>
-            {priority}
+          <div className="card-badges">
+            {incident_type && (
+              <div className={`type-badge ${incident_type}`}>
+                {incident_type === 'disaster' ? '🌊 Disaster' : '🏥 Medical'}
+              </div>
+            )}
+            <div className={`p-badge ${priority}`}>
+              <span style={{ fontSize: 7 }}>{PRIORITY_ICONS[priority]}</span>
+              {priority}
+            </div>
           </div>
         </div>
 
@@ -95,7 +116,7 @@ export default function IncidentCard({ incident }) {
           </div>
         )}
 
-        {/* Score bars */}
+        {/* Scores */}
         <div className="scores">
           <ScoreBar label="Urgency"     value={urgency}     type="urgency"     />
           <ScoreBar label="Stress"      value={stress}      type="stress"      />
@@ -108,8 +129,7 @@ export default function IncidentCard({ incident }) {
             <ul className="action-list">
               {actions.map((a, i) => (
                 <li key={i} className="action-item">
-                  <span className="action-arrow">→</span>
-                  {a}
+                  <span className="action-arrow">→</span>{a}
                 </li>
               ))}
             </ul>
@@ -122,6 +142,20 @@ export default function IncidentCard({ incident }) {
             <p>{transcript}</p>
           </Section>
         )}
+
+        {/* Status update */}
+        <div className="status-update-row">
+          <span className="status-update-label">Status:</span>
+          <span className={`status-badge ${status}`}>{status}</span>
+          <div style={{ flex: 1 }} />
+          <button
+            className="status-btn"
+            onClick={() => updateStatus(STATUS_NEXT[status])}
+            disabled={updating}
+          >
+            {updating ? '...' : STATUS_LABEL[status]}
+          </button>
+        </div>
 
       </div>
     </div>

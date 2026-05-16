@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -6,84 +6,143 @@
   padding: 0;
 }
 
-:root {
-  /* ── Core Backgrounds ── */
-  --bg-root:    #07080F;
-  --bg-surface: #0B0D17;
-  --bg-card:    #0E1020;
-  --bg-raise:   #131626;
-  --bg-input:   #090B14;
+/* ════════════════════════════════════════════
+   DARK THEME  —  html.dark
+════════════════════════════════════════════ */
+html.dark {
+  --bg-root:    #08090F;
+  --bg-surface: #0C0E1A;
+  --bg-card:    #0F1120;
+  --bg-raise:   #141729;
+  --bg-input:   #090A15;
 
-  /* ── Borders ── */
-  --border:       rgba(255,255,255,0.055);
-  --border-mid:   rgba(255,255,255,0.10);
-  --border-hi:    rgba(255,255,255,0.18);
+  --border:     rgba(255, 255, 255, 0.055);
+  --border-mid: rgba(255, 255, 255, 0.10);
+  --border-hi:  rgba(255, 255, 255, 0.18);
 
-  /* ── Text ── */
-  --txt-primary:   #E8ECF5;
-  --txt-secondary: #6C7A9C;
+  --txt-primary:   #DDE4F0;
+  --txt-secondary: #6B7FA3;
   --txt-muted:     #353E58;
-  --txt-dim:       #1F2538;
 
-  /* ── Brand Accent (Electric Lime) ── */
-  --lime:        #A8FF3E;
-  --lime-dim:    rgba(168,255,62,0.10);
-  --lime-border: rgba(168,255,62,0.30);
-  --lime-glow:   rgba(168,255,62,0.20);
+  --accent:        #A8FF3E;
+  --accent-dim:    rgba(168, 255, 62, 0.10);
+  --accent-border: rgba(168, 255, 62, 0.30);
+  --accent-glow:   rgba(168, 255, 62, 0.20);
+  --accent-text:   #07080F;
 
-  /* ── Blue Accent (Interactive) ── */
-  --blue:        #3D8BFF;
-  --blue-dim:    rgba(61,139,255,0.12);
-  --blue-border: rgba(61,139,255,0.30);
+  --p-critical:        #FF3B30;
+  --p-critical-bg:     rgba(255, 59, 48, 0.08);
+  --p-critical-border: rgba(255, 59, 48, 0.28);
+  --p-critical-glow:   rgba(255, 59, 48, 0.18);
 
-  /* ── Priority ── */
-  --p-critical:   #FF3B30;
-  --p-critical-bg:    rgba(255,59,48,0.08);
-  --p-critical-border:rgba(255,59,48,0.28);
-  --p-critical-glow:  rgba(255,59,48,0.18);
+  --p-high:        #FF7A00;
+  --p-high-bg:     rgba(255, 122, 0, 0.08);
+  --p-high-border: rgba(255, 122, 0, 0.28);
 
-  --p-high:   #FF7A00;
-  --p-high-bg:    rgba(255,122,0,0.08);
-  --p-high-border:rgba(255,122,0,0.28);
+  --p-medium:        #FFBB00;
+  --p-medium-bg:     rgba(255, 187, 0, 0.08);
+  --p-medium-border: rgba(255, 187, 0, 0.28);
 
-  --p-medium:   #FFBB00;
-  --p-medium-bg:    rgba(255,187,0,0.08);
-  --p-medium-border:rgba(255,187,0,0.28);
+  --p-low:        #34C759;
+  --p-low-bg:     rgba(52, 199, 89, 0.08);
+  --p-low-border: rgba(52, 199, 89, 0.28);
 
-  --p-low:   #34C759;
-  --p-low-bg:    rgba(52,199,89,0.08);
-  --p-low-border:rgba(52,199,89,0.28);
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.5);
+  --shadow-lg:   0 12px 40px rgba(0, 0, 0, 0.7);
 
-  /* ── Typography ── */
-  --font-display: 'Chakra Petch', sans-serif;
-  --font-body:    'Outfit', sans-serif;
-  --font-mono:    'JetBrains Mono', monospace;
+  color-scheme: dark;
 }
 
-html, body {
+/* ════════════════════════════════════════════
+   LIGHT THEME  —  html.light
+════════════════════════════════════════════ */
+html.light {
+  --bg-root:    #F2F4F9;
+  --bg-surface: #EAECF4;
+  --bg-card:    #FFFFFF;
+  --bg-raise:   #F0F2F8;
+  --bg-input:   #F8F9FD;
+
+  --border:     rgba(0, 0, 0, 0.07);
+  --border-mid: rgba(0, 0, 0, 0.13);
+  --border-hi:  rgba(0, 0, 0, 0.22);
+
+  --txt-primary:   #0D0F1A;
+  --txt-secondary: #4A5572;
+  --txt-muted:     #9AA3BB;
+
+  --accent:        #16803C;
+  --accent-dim:    rgba(22, 128, 60, 0.09);
+  --accent-border: rgba(22, 128, 60, 0.30);
+  --accent-glow:   rgba(22, 128, 60, 0.15);
+  --accent-text:   #FFFFFF;
+
+  --p-critical:        #DC2626;
+  --p-critical-bg:     rgba(220, 38, 38, 0.07);
+  --p-critical-border: rgba(220, 38, 38, 0.25);
+  --p-critical-glow:   rgba(220, 38, 38, 0.12);
+
+  --p-high:        #EA6600;
+  --p-high-bg:     rgba(234, 102, 0, 0.07);
+  --p-high-border: rgba(234, 102, 0, 0.25);
+
+  --p-medium:        #CA8A04;
+  --p-medium-bg:     rgba(202, 138, 4, 0.07);
+  --p-medium-border: rgba(202, 138, 4, 0.25);
+
+  --p-low:        #16A34A;
+  --p-low-bg:     rgba(22, 163, 74, 0.07);
+  --p-low-border: rgba(22, 163, 74, 0.25);
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-lg:   0 8px 32px rgba(0, 0, 0, 0.14);
+
+  color-scheme: light;
+}
+
+/* ════════════════════════════════════════════
+   BASE  —  reads variables defined above
+════════════════════════════════════════════ */
+html {
   height: 100%;
-  background: var(--bg-root);
+}
+
+body {
+  min-height: 100%;
+  background-color: var(--bg-root);
   color: var(--txt-primary);
-  font-family: var(--font-body);
+  font-family: 'Outfit', sans-serif;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.25s ease;
 }
 
 #root { min-height: 100vh; }
 
-/* Custom scrollbar */
-::-webkit-scrollbar       { width: 3px; }
+/* Smooth transitions on themed elements */
+.app, .header, .telemetry, .telem-block,
+.left-panel, .right-panel,
+.login-form-panel,
+.card, .card-inner, .card-stripe,
+.form-input,
+.filter-tab,
+.theme-toggle,
+.submit-btn, .status-btn, .reset-btn, .signout-btn,
+.agent-pill, .signal-status,
+.p-badge, .type-badge, .status-badge, .sentiment,
+.score-track, .process-steps, .error-banner,
+.success-card, .expand-btn, .expand-section,
+.rec-btn, .rec-ring,
+.sl-line, .brand-sep {
+  transition:
+    background-color 0.3s ease,
+    color            0.25s ease,
+    border-color     0.25s ease,
+    box-shadow       0.25s ease;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
 
 input, textarea, button, select { font-family: inherit; }
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-a:hover,
-a:focus,
-a:focus-visible {
-  text-decoration: underline;
-}
