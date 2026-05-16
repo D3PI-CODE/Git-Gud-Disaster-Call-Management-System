@@ -1,23 +1,40 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export default function ProtectedRoute({ children }) {
-  const [session, setSession] = useState(undefined)
+  const [status, setStatus] = useState('checking') // checking | ok | denied
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
-    return () => subscription.unsubscribe()
+    const token = localStorage.getItem('resqnet_token')
+
+    if (!token) {
+      setStatus('denied')
+      return
+    }
+
+    // Verify token is still valid with the backend
+    fetch(`${API_URL}/api/auth/session`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(res => setStatus(res.ok ? 'ok' : 'denied'))
+      .catch(() => setStatus('denied'))
   }, [])
 
-  if (session === undefined) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', color: 'var(--txt-muted)',
-      fontFamily: 'var(--font-display)', letterSpacing: '0.1em', fontSize: 12 }}>
-      AUTHENTICATING...
-    </div>
-  )
+  if (status === 'checking') {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        background: 'var(--bg-root)', color: 'var(--txt-muted)',
+        fontFamily: 'Chakra Petch, sans-serif',
+        fontSize: 11, letterSpacing: '0.14em'
+      }}>
+        AUTHENTICATING...
+      </div>
+    )
+  }
 
-  return session ? children : <Navigate to="/login" replace />
+  return status === 'ok' ? children : <Navigate to="/login" replace />
 }

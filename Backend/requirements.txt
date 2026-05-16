@@ -1,7 +1,10 @@
 fastapi
+pydantic
 uvicorn
 python-multipart
 supabase
 python-dotenv
 requests
 google-generativeai
+email-validator
+psycopg2-binary

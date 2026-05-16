@@ -1,10 +1,8 @@
 import IncidentCard from './IncidentCard'
 
-const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 }
-
 export default function Dashboard({ incidents }) {
   const sorted = [...incidents].sort(
-    (a, b) => (PRIORITY_ORDER[a.priority] ?? 4) - (PRIORITY_ORDER[b.priority] ?? 4)
+    (a, b) => (b.urgency_score || 0) - (a.urgency_score || 0)
   )
 
   return (

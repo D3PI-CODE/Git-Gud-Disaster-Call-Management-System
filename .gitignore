@@ -1,57 +1,60 @@
-# ================================
-# OS & Editor (Applied Globally)
-# ================================
-.DS_Store
-Thumbs.db
-Desktop.ini
-.idea/
-*.suo
-.ntvs
-*.njsproj
-*.sln
-*.sw?
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+nosetests.xml
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+sdist/
+develop-eggs/
+installdeps/
 
-# VS Code specific
-.vscode/
-!.vscode/extensions.json
-!.vscode/settings.json
-
-# ================================
-# Environment & Secrets
-# ================================
-# This matches .env files anywhere in the project
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-
-# ================================
-# Python / Backend (Specific to Backend folder)
-# ================================
-Backend/__pycache__/
-Backend/*.py[cod]
-Backend/.venv/
-Backend/venv/
-Backend/env/
-Backend/dist/
-Backend/build/
-Backend/*.egg-info/
-Backend/.pytest_cache/
-Backend/.mypy_cache/
-
-# ================================
-# Frontend (Specific to Frontend folder)
-# ================================
-Frontend/node_modules/
-Frontend/.eslintcache
-Frontend/dist/
-Frontend/.prettierignore
-
-# ================================
-# Logs & Debug
-# ================================
-logs/
-*.log
+# Node / npm
+node_modules/
 npm-debug.log*
 yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+build/
+/.pnp/
+.pnp.js
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment files
+.env
+.env.*.local
+
+# VS Code
+.vscode/
+.history/
+
+# Cursor
+.cursor/
+
+# OS and misc
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
