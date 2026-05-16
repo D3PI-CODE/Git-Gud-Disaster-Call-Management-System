@@ -3,193 +3,163 @@ import { useState, useRef, useEffect } from 'react'
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const STEPS = [
-  { key: 'transcribe',  label: 'Transcribing audio...' },
-  { key: 'sentiment',   label: 'Analysing sentiment...' },
-  { key: 'prosody',     label: 'Detecting urgency & stress...' },
-  { key: 'formatting',  label: 'Extracting action items...' },
-  { key: 'saving',      label: 'Saving to dashboard...' },
+  { key: 'transcribe', label: 'Transcribing audio via VALSEA' },
+  { key: 'sentiment',  label: 'Analysing sentiment'           },
+  { key: 'prosody',    label: 'Detecting urgency & stress'    },
+  { key: 'format',     label: 'Extracting action items'       },
+  { key: 'save',       label: 'Saving to ResQNet'             },
 ]
 
-const PREFERRED_AUDIO_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
-
-function getSupportedMimeType() {
-  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
-    return ''
-  }
-  return PREFERRED_AUDIO_TYPES.find(type => MediaRecorder.isTypeSupported(type)) || ''
+const PRIORITY_COLOURS = {
+  critical: 'var(--p-critical)',
+  high:     'var(--p-high)',
+  medium:   'var(--p-medium)',
+  low:      'var(--p-low)',
 }
 
-function useTimer(active) {
-  const [seconds, setSeconds] = useState(0)
+function useTimer(running) {
+  const [secs, setSecs] = useState(0)
   useEffect(() => {
-    if (!active) { setSeconds(0); return }
-    const id = setInterval(() => setSeconds(s => s + 1), 1000)
+    if (!running) { setSecs(0); return }
+    const id = setInterval(() => setSecs(s => s + 1), 1000)
     return () => clearInterval(id)
-  }, [active])
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
-  const ss = String(seconds % 60).padStart(2, '0')
-  return `${mm}:${ss}`
+  }, [running])
+  return `${String(Math.floor(secs / 60)).padStart(2,'0')}:${String(secs % 60).padStart(2,'0')}`
 }
 
 export default function AudioRecorder() {
-  const [callerName, setCallerName] = useState('')
-  const [location,   setLocation]   = useState('')
-
-  // States: idle | recording | processing | success | error
-  const [status,    setStatus]    = useState('idle')
-  const [audioBlob, setAudioBlob] = useState(null)
-  const [stepIndex, setStepIndex] = useState(0)
-  const [errorMsg,  setErrorMsg]  = useState('')
+  const [name,      setName]      = useState('')
+  const [location,  setLocation]  = useState('')
+  const [status,    setStatus]    = useState('idle')   // idle|recording|processing|success|error
+  const [blob,      setBlob]      = useState(null)
+  const [stepIdx,   setStepIdx]   = useState(0)
+  const [errMsg,    setErrMsg]    = useState('')
   const [priority,  setPriority]  = useState(null)
 
-  const mediaRecorderRef = useRef(null)
-  const chunksRef        = useRef([])
-  const timer = useTimer(status === 'recording')
+  const mrRef     = useRef(null)
+  const chunksRef = useRef([])
+  const timer     = useTimer(status === 'recording')
 
-  async function startRecording() {
-    let stream
+  async function startRec() {
     try {
-      if (typeof MediaRecorder === 'undefined') {
-        throw new Error('media-recorder-unsupported')
-      }
-
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = getSupportedMimeType()
-      const mr = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream)
-
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
       chunksRef.current = []
-
       mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       mr.onstop = () => {
-        const blobType = mr.mimeType || mimeType || chunksRef.current[0]?.type || 'audio/webm'
-        const blob = new Blob(chunksRef.current, { type: blobType })
-        setAudioBlob(blob)
+        setBlob(new Blob(chunksRef.current, { type: 'audio/webm' }))
         stream.getTracks().forEach(t => t.stop())
       }
-
       mr.start(250)
-      mediaRecorderRef.current = mr
+      mrRef.current = mr
       setStatus('recording')
-      setErrorMsg('')
-    } catch (err) {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop())
-      }
-      console.error('Failed to start audio recording:', err)
+    } catch {
       setStatus('error')
-      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        setErrorMsg('Microphone access denied. Please allow microphone access.')
-      } else if (err?.name === 'NotSupportedError' || err?.message === 'media-recorder-unsupported') {
-        setErrorMsg('Audio recording is not supported in this browser.')
-      } else {
-        setErrorMsg('Unable to start recording. Please try again.')
-      }
+      setErrMsg('Microphone access denied. Please allow mic access and try again.')
     }
   }
 
-  function stopRecording() {
-    mediaRecorderRef.current?.stop()
-    setStatus('idle') // will be updated to 'processing' via submit
+  function stopRec() {
+    mrRef.current?.stop()
+    setStatus('idle')
   }
 
-  async function handleSubmit() {
-    if (!audioBlob) return
+  async function submit() {
+    if (!blob) return
     setStatus('processing')
-    setStepIndex(0)
-    setErrorMsg('')
+    setStepIdx(0)
+    setErrMsg('')
 
-    // Simulate step progression while waiting for the API
-    let step = 0
-    const stepTimer = setInterval(() => {
-      step++
-      if (step < STEPS.length) setStepIndex(step)
-      else clearInterval(stepTimer)
-    }, 2800)
+    let i = 0
+    const t = setInterval(() => {
+      i++
+      if (i < STEPS.length) setStepIdx(i)
+      else clearInterval(t)
+    }, 2600)
 
     try {
       const form = new FormData()
-      const audioType = audioBlob.type || 'audio/webm'
-      const extension = audioType.includes('mp4') ? 'mp4' : 'webm'
-      form.append('audio',       new File([audioBlob], `call.${extension}`, { type: audioType }))
-      form.append('caller_name', callerName || 'Unknown')
-      form.append('location',    location   || 'Unknown')
+      form.append('audio',       new File([blob], 'incident.webm', { type: 'audio/webm' }))
+      form.append('caller_name', name     || 'Unknown')
+      form.append('location',    location || 'Unknown')
 
       const res  = await fetch(`${API_URL}/incident`, { method: 'POST', body: form })
-      clearInterval(stepTimer)
+      clearInterval(t)
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.detail || `Server error ${res.status}`)
+        const e = await res.json().catch(() => ({}))
+        throw new Error(e.detail || `Server error ${res.status}`)
       }
 
       const data = await res.json()
       setPriority(data.priority)
       setStatus('success')
-    } catch (err) {
-      clearInterval(stepTimer)
-      setErrorMsg(err.message || 'Something went wrong. Try again.')
+    } catch (e) {
+      clearInterval(t)
+      setErrMsg(e.message || 'Something went wrong. Please try again.')
       setStatus('error')
     }
   }
 
   function reset() {
-    setStatus('idle')
-    setAudioBlob(null)
-    setCallerName('')
-    setLocation('')
-    setStepIndex(0)
-    setErrorMsg('')
-    setPriority(null)
+    setStatus('idle'); setBlob(null)
+    setName(''); setLocation('')
+    setStepIdx(0); setErrMsg(''); setPriority(null)
   }
 
-  // ─── Render ───────────────────────────────────────────────
-
+  /* ── Success ─────────────────────────────── */
   if (status === 'success') {
-    const PRIORITY_ICONS = { critical:'🔴', high:'🟠', medium:'🟡', low:'🟢' }
     return (
       <>
-        <div className="panel-title">New Incident</div>
-        <div className="success-state">
+        <div className="section-label">
+          <span className="section-label-text">New Incident</span>
+          <span className="section-label-line" />
+        </div>
+        <div className="success-card">
           <div className="success-icon">✅</div>
           <div className="success-title">Incident Logged</div>
           {priority && (
-            <div className={`priority-badge ${priority}`} style={{ fontSize: 12, padding: '5px 12px' }}>
-              {PRIORITY_ICONS[priority]} {priority?.toUpperCase()} PRIORITY
+            <div className="p-badge" style={{
+              background: `${PRIORITY_COLOURS[priority]}18`,
+              border: `1px solid ${PRIORITY_COLOURS[priority]}44`,
+              color: PRIORITY_COLOURS[priority],
+              fontSize: 11, padding: '6px 14px'
+            }}>
+              ● {priority?.toUpperCase()} PRIORITY
             </div>
           )}
-          <div className="success-sub">
-            The incident has appeared on the live dashboard.
-          </div>
+          <div className="success-sub">Visible on the live dashboard now.</div>
           <button className="reset-btn" onClick={reset}>+ Log Another</button>
         </div>
       </>
     )
   }
 
+  /* ── Main Form ───────────────────────────── */
   return (
     <>
-      <div className="panel-title">New Incident</div>
+      <div className="section-label">
+        <span className="section-label-text">New Incident</span>
+        <span className="section-label-line" />
+      </div>
 
-      <div className="recorder-form">
-        {/* Caller Name */}
-        <div className="field-group">
-          <label className="field-label">Caller Name</label>
+      <div className="incident-form">
+
+        <div className="form-row">
+          <label className="form-label">Caller Name</label>
           <input
-            className="field-input"
+            className="form-input"
             placeholder="e.g. Priya Nair"
-            value={callerName}
-            onChange={e => setCallerName(e.target.value)}
+            value={name}
+            onChange={e => setName(e.target.value)}
             disabled={status === 'processing'}
           />
         </div>
 
-        {/* Location */}
-        <div className="field-group">
-          <label className="field-label">Location</label>
+        <div className="form-row">
+          <label className="form-label">Location</label>
           <input
-            className="field-input"
+            className="form-input"
             placeholder="e.g. Batticaloa, Eastern Province"
             value={location}
             onChange={e => setLocation(e.target.value)}
@@ -197,74 +167,66 @@ export default function AudioRecorder() {
           />
         </div>
 
-        {/* Record Area */}
-        <div className="record-area">
-          {/* Waveform (visible while recording) */}
+        {/* Record zone */}
+        <div className="record-zone">
           <div className="waveform">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div
-                key={i}
-                className={`wave-bar ${status === 'recording' ? 'active' : ''}`}
-                style={{ height: status !== 'recording' ? 4 : undefined }}
-              />
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className={`wv-bar ${status === 'recording' ? 'active' : ''}`} />
             ))}
           </div>
 
-          {/* Mic / Stop button */}
-          <button
-            className={`record-btn ${status === 'recording' ? 'recording' : ''}`}
-            onClick={status === 'recording' ? stopRecording : startRecording}
-            disabled={status === 'processing'}
-            title={status === 'recording' ? 'Stop recording' : 'Start recording'}
-          >
-            {status === 'recording' ? (
-              /* Stop icon */
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="var(--critical)">
-                <rect x="4" y="4" width="16" height="16" rx="2" />
-              </svg>
-            ) : (
-              /* Mic icon */
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                   stroke="var(--text-secondary)" strokeWidth="2"
-                   strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z"/>
-                <path d="M19 10a7 7 0 0 1-14 0"/>
-                <line x1="12" y1="19" x2="12" y2="23"/>
-                <line x1="8"  y1="23" x2="16" y2="23"/>
-              </svg>
-            )}
-          </button>
+          <div className={`rec-btn-wrap ${status === 'recording' ? 'recording' : ''}`}>
+            <div className="rec-btn-ring" />
+            <button
+              className={`rec-btn ${status === 'recording' ? 'recording' : ''}`}
+              onClick={status === 'recording' ? stopRec : startRec}
+              disabled={status === 'processing'}
+              title={status === 'recording' ? 'Stop recording' : 'Start recording'}
+            >
+              {status === 'recording' ? (
+                /* Stop icon */
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="var(--p-critical)">
+                  <rect x="3" y="3" width="14" height="14" rx="3"/>
+                </svg>
+              ) : (
+                /* Mic icon */
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                     stroke="var(--txt-secondary)" strokeWidth="1.8"
+                     strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z"/>
+                  <path d="M19 10a7 7 0 0 1-14 0"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8"  y1="23" x2="16" y2="23"/>
+                </svg>
+              )}
+            </button>
+          </div>
 
-          {/* Timer */}
           {status === 'recording' && (
-            <div className="record-timer">{timer}</div>
+            <div className="rec-timer">{timer}</div>
           )}
 
-          {/* Hint text */}
-          {status === 'idle' && !audioBlob && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              Tap to start recording
-            </span>
+          {status !== 'recording' && !blob && (
+            <span className="rec-hint">Tap to start recording</span>
           )}
 
-          {audioBlob && status === 'idle' && (
-            <span style={{ fontSize: 11, color: 'var(--low)', fontFamily: 'var(--font-mono)' }}>
-              ✓ Recording ready ({(audioBlob.size / 1024).toFixed(0)} KB)
+          {blob && status === 'idle' && (
+            <span className="rec-ready">
+              ✓ Ready · {(blob.size / 1024).toFixed(0)} KB
             </span>
           )}
         </div>
 
-        {/* Processing steps */}
+        {/* Processing */}
         {status === 'processing' && (
-          <div className="processing-steps">
+          <div className="process-steps">
             {STEPS.map((step, i) => {
-              const state = i < stepIndex ? 'done' : i === stepIndex ? 'active' : ''
+              const cls = i < stepIdx ? 'done' : i === stepIdx ? 'active' : ''
               return (
-                <div key={step.key} className={`step-row ${state}`}>
-                  <div className="step-icon">
-                    {i < stepIndex  ? '✓' :
-                     i === stepIndex ? <div className="spinner" /> :
-                     '·'}
+                <div key={step.key} className={`process-step ${cls}`}>
+                  <div className="step-dot">
+                    {i < stepIdx  ? '✓' :
+                     i === stepIdx ? <div className="spin-dot" /> : '·'}
                   </div>
                   <span>{step.label}</span>
                 </div>
@@ -274,17 +236,16 @@ export default function AudioRecorder() {
         )}
 
         {/* Error */}
-        {status === 'error' && errorMsg && (
-          <div className="error-msg">⚠ {errorMsg}</div>
+        {status === 'error' && errMsg && (
+          <div className="error-banner">⚠ {errMsg}</div>
         )}
 
-        {/* Submit */}
         <button
           className="submit-btn"
-          onClick={handleSubmit}
-          disabled={!audioBlob || status === 'processing' || status === 'recording'}
+          onClick={submit}
+          disabled={!blob || status === 'processing' || status === 'recording'}
         >
-          {status === 'processing' ? '⏳ Processing...' : '→ Submit Incident'}
+          {status === 'processing' ? '⏳  Processing...' : '→  Submit Incident'}
         </button>
       </div>
     </>
