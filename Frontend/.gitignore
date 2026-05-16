@@ -22,7 +22,6 @@ build/
 
 # ESLint / Prettier
 .eslintcache
-.prettierignore
 
 # ================================
 # Python / FastAPI
