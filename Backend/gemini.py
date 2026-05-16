@@ -1,14 +1,15 @@
 import os
 import json
-import google.generativeai as genai
 from dotenv import load_dotenv
+from google.generativeai.client import configure
+from google.generativeai.generative_models import GenerativeModel
 
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    configure(api_key=GEMINI_API_KEY)
 else:
     print("Warning: GEMINI_API_KEY not set in .env")
 
@@ -20,7 +21,7 @@ def extract_disaster_data(text: str) -> dict:
         raise Exception("Gemini API key is not initialized.")
 
     # Using response_mime_type to force JSON output
-    model = genai.GenerativeModel(
+    model = GenerativeModel(
         'gemini-1.5-flash',
         generation_config={"response_mime_type": "application/json"}
     )
