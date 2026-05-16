@@ -6,6 +6,5 @@ supabase
 python-dotenv
 requests
 groq
-google-generativeai
 email-validator
 psycopg2-binary
