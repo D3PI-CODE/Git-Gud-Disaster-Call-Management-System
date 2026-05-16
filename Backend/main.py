@@ -1,12 +1,18 @@
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from valsea import transcribe_audio
 from gemini import extract_disaster_data
-from supabase_client import insert_incident, fetch_incidents, supabase
+from supabase_client import (
+    insert_incident,
+    fetch_incidents,
+    fetch_incident_by_id,
+    serialize_incident,
+    supabase,
+)
 from priority import urgency_to_priority
 from auth_routes import router as auth_router
 
@@ -33,9 +39,12 @@ def require_agent(authorization: Optional[str] = Header(default=None)):
         result = supabase.auth.get_user(token)
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid session") from e
-    if not result.user:
+    if not result:
         raise HTTPException(status_code=401, detail="Invalid session")
-    return result.user
+    user = result.user
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return user
 
 
 async def _process_audio_upload(
@@ -101,19 +110,69 @@ async def process_incident(
 
 
 @app.get("/api/incidents")
-def list_incidents(authorization: Optional[str] = Header(default=None)):
+def list_incidents(
+    status: Optional[str] = Query(
+        default=None,
+        pattern="^(PENDING|IN_PROGRESS|RESOLVED)$",
+        description="Filter by lifecycle status",
+    ),
+    incident_type: Optional[str] = Query(
+        default=None,
+        pattern="^(MEDICAL|DISASTER)$",
+        description="Filter by incident type",
+    ),
+    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    since: Optional[str] = Query(
+        default=None,
+        description="ISO timestamp; return only incidents created after this time",
+    ),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Live feed for the agent dashboard.
+
+    Returns a list of incidents normalized into the exact shape the frontend's
+    `IncidentCard.jsx` consumes (caller info, structured analysis, transcript,
+    server-computed priority).
+    """
     require_agent(authorization)
-    incidents = fetch_incidents()
-    for row in incidents:
-        row["priority"] = urgency_to_priority(
-            row.get("urgency_score"),
-            row.get("incident_type"),
+    try:
+        rows = fetch_incidents(
+            status=status,
+            incident_type=incident_type,
+            limit=limit,
+            since=since,
         )
-    return incidents
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return [serialize_incident(row) for row in rows]
+
+
+@app.get("/api/incidents/{incident_id}")
+def get_incident(
+    incident_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Fetch a single incident by full UUID for detail views."""
+    require_agent(authorization)
+    try:
+        row = fetch_incident_by_id(incident_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return serialize_incident(row)
 
 
 @app.get("/incident/status/{ref_id}")
 async def get_incident_status(ref_id: str):
+    """Public lookup used by the Telegram bot's /status command.
+
+    Accepts a short reference (prefix of the UUID) rather than the full id.
+    """
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
 
@@ -125,15 +184,23 @@ async def get_incident_status(ref_id: str):
         .execute()
     )
 
-    if not result.data:
+    rows = result.data or []
+    if not rows:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    row = result.data[0]
-    row["priority"] = urgency_to_priority(
-        row.get("urgency_score"),
-        row.get("incident_type"),
-    )
-    return row
+    row = rows[0]
+    if not isinstance(row, dict):
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    urgency_score = row.get("urgency_score")
+    incident_type = row.get("incident_type")
+    return {
+        **row,
+        "priority": urgency_to_priority(
+            urgency_score if isinstance(urgency_score, (int, float)) else None,
+            incident_type if isinstance(incident_type, str) else None,
+        ),
+    }
 
 
 @app.get("/health")

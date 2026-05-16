@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { agentLogin } from '../lib/api'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const MIN_PASSWORD_LENGTH = 8
 
 function ThemeToggle({ theme, onToggle }) {
   return (
@@ -39,31 +40,24 @@ export default function Login({ theme, onToggle }) {
 
   async function handleLogin(e) {
     e.preventDefault()
-    setLoading(true)
     setError('')
 
+    const normalizedEmail = email.trim().toLowerCase()
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`)
+      return
+    }
+
+    setLoading(true)
     try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, password }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.detail || 'Invalid email or password')
-        setLoading(false)
-        return
-      }
-
-      // Save token and user info to localStorage
-      localStorage.setItem('resqnet_token', data.access_token)
-      localStorage.setItem('resqnet_user',  JSON.stringify(data.user))
-
+      // agentLogin() POSTs the plaintext password ONCE to /api/auth/login.
+      // The backend hands it to Supabase, which bcrypt-hashes it and
+      // compares it to the stored hash. We only ever receive a JWT back
+      // (never a password or a hash) and agentLogin() persists the session.
+      await agentLogin(normalizedEmail, password)
       navigate('/dashboard')
     } catch (err) {
-      setError('Could not connect to server. Is the backend running?')
+      setError(err.message || 'Invalid email or password')
       setLoading(false)
     }
   }
