@@ -1,3 +1,5 @@
+import { attachAgentToken, supabase } from './supabaseClient'
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const TOKEN_KEY = 'resqnet_token'
 const USER_KEY = 'resqnet_user'
@@ -9,11 +11,15 @@ export function getAuthToken() {
 export function setAuthSession(session) {
   localStorage.setItem(TOKEN_KEY, session.access_token)
   localStorage.setItem(USER_KEY, JSON.stringify(session.user))
+  // Propagate JWT to the shared Supabase client so Realtime + PostgREST
+  // both authenticate as the freshly-logged-in agent.
+  attachAgentToken(session.access_token)
 }
 
 export function clearAuthSession() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
+  supabase.realtime.setAuth(null)
 }
 
 export function getStoredUser() {
@@ -74,6 +80,20 @@ export async function processAudio(blob, { caller_name, location }) {
   form.append('location', location || 'Unknown')
 
   return apiFetch('/api/process-audio', { method: 'POST', body: form })
+}
+
+/**
+ * Drive the FastAPI /api/triage webhook from the frontend (or anywhere).
+ * Pass either a `transcript` (Gemini will fill in the rest) or a fully
+ * pre-extracted payload. The new incident will be pushed back to the
+ * dashboard via the Supabase Realtime channel within ~100ms.
+ */
+export async function triageIncident(payload) {
+  return apiFetch('/api/triage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 export { API_URL }

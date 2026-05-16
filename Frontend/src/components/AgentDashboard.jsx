@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Sun,
   Moon,
@@ -10,21 +9,9 @@ import {
   AlertTriangle,
   Radio,
 } from 'lucide-react'
+import { supabase, attachAgentToken } from '../lib/supabaseClient'
 
-/* ─── Supabase ───────────────────────────────────────────── */
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY
 const THEME_KEY = 'resqnet-theme'
-
-function makeClient() {
-  const token = localStorage.getItem('resqnet_token')
-  const client = createClient(SUPABASE_URL, SUPABASE_ANON, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-  })
-  if (token) client.realtime.setAuth(token)
-  return client
-}
 
 /* ─── Helpers ────────────────────────────────────────────── */
 function parseStructured(raw) {
@@ -353,7 +340,6 @@ export default function AgentDashboard({ onSignOut }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [liveStatus, setLiveStatus] = useState('connecting')
-  const supaRef = useRef(null)
 
   const user = getUser()
   const agentName = user.name || user.email?.split('@')[0] || 'Agent'
@@ -364,8 +350,10 @@ export default function AgentDashboard({ onSignOut }) {
     .slice(0, 2)
     .toUpperCase()
 
-  const loadPending = useCallback(async client => {
-    const { data, error: err } = await client
+  // Initial backfill: fetch every row currently in PENDING so the dashboard
+  // is populated before the realtime stream takes over.
+  const loadPending = useCallback(async () => {
+    const { data, error: err } = await supabase
       .from('incidents')
       .select('*, users(name, contact_number)')
       .eq('status', 'PENDING')
@@ -377,79 +365,109 @@ export default function AgentDashboard({ onSignOut }) {
 
   useEffect(() => {
     let cancelled = false
-    let channel = null
 
-    async function init() {
-      try {
-        const client = makeClient()
-        supaRef.current = client
+    // Make sure the freshest JWT is attached to the singleton client
+    // before we open the realtime socket. Without this, RLS-gated
+    // postgres_changes events are filtered out silently.
+    const token = localStorage.getItem('resqnet_token')
+    if (token) attachAgentToken(token)
 
-        const pending = await loadPending(client)
-        if (!cancelled) {
-          setIncidents(pending)
-          setLoading(false)
-        }
-
-        channel = client
-          .channel('agent-dashboard-incidents')
-          .on(
-            'postgres_changes',
-            { event: 'INSERT', schema: 'public', table: 'incidents' },
-            payload => {
-              const row = payload.new
-              if (row?.status !== 'PENDING') return
-              setIncidents(prev =>
-                sortByUrgency([row, ...prev.filter(i => i.id !== row.id)]),
-              )
-            },
+    /* ─── Realtime subscription ───────────────────────────────────────
+     * Channel: 'schema-db-changes'
+     *   - INSERT on public.incidents WHERE status = 'PENDING'
+     *       -> append payload.new and re-sort by urgency_score DESC
+     *   - UPDATE on public.incidents
+     *       -> if status leaves PENDING, evict from state
+     *       -> else upsert the row and re-sort by urgency_score DESC
+     * The Supabase publication (ALTER PUBLICATION supabase_realtime
+     * ADD TABLE public.incidents) MUST exist or none of this fires.
+     * ──────────────────────────────────────────────────────────────── */
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'incidents',
+          filter: 'status=eq.PENDING',
+        },
+        payload => {
+          const row = payload?.new
+          if (!row?.id) return
+          setIncidents(prev =>
+            sortByUrgency([row, ...prev.filter(i => i.id !== row.id)]),
           )
-          .on(
-            'postgres_changes',
-            { event: 'UPDATE', schema: 'public', table: 'incidents' },
-            payload => {
-              const row = payload.new
-              if (!row) return
-              if (row.status !== 'PENDING') {
-                setIncidents(prev => prev.filter(i => i.id !== row.id))
-                return
-              }
-              setIncidents(prev =>
-                sortByUrgency([row, ...prev.filter(i => i.id !== row.id)]),
-              )
-            },
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'incidents' },
+        payload => {
+          const row = payload?.new
+          if (!row?.id) return
+          if (row.status !== 'PENDING') {
+            setIncidents(prev => prev.filter(i => i.id !== row.id))
+            return
+          }
+          setIncidents(prev =>
+            sortByUrgency([row, ...prev.filter(i => i.id !== row.id)]),
           )
-          .subscribe(status => {
-            if (!cancelled) {
-              setLiveStatus(status === 'SUBSCRIBED' ? 'live' : 'connecting')
-            }
-          })
-      } catch (e) {
-        if (!cancelled) {
-          setError(e.message)
-          setLoading(false)
-        }
-      }
-    }
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'incidents' },
+        payload => {
+          const id = payload?.old?.id
+          if (!id) return
+          setIncidents(prev => prev.filter(i => i.id !== id))
+        },
+      )
+      .subscribe(status => {
+        console.log('Supabase Realtime Status changed:', status)
+        if (cancelled) return
+        if (status === 'SUBSCRIBED') setLiveStatus('live')
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT')
+          setLiveStatus('error')
+        else setLiveStatus('connecting')
+      })
 
-    init()
+    // Kick off the initial backfill in parallel with channel subscription.
+    loadPending()
+      .then(rows => {
+        if (cancelled) return
+        setIncidents(prev => {
+          // Merge backfill with anything realtime may have already pushed.
+          const byId = new Map(prev.map(r => [r.id, r]))
+          for (const row of rows) byId.set(row.id, row)
+          return sortByUrgency([...byId.values()])
+        })
+        setLoading(false)
+      })
+      .catch(e => {
+        if (cancelled) return
+        setError(e.message)
+        setLoading(false)
+      })
+
     return () => {
       cancelled = true
-      if (channel && supaRef.current) {
-        supaRef.current.removeChannel(channel)
-      }
+      supabase.removeChannel(channel)
     }
   }, [loadPending])
 
   async function handleAccept(incident) {
-    const client = supaRef.current
-    if (!client) return
     setAcceptingId(incident.id)
     setError(null)
-    const { error: err } = await client
+    const { error: err } = await supabase
       .from('incidents')
       .update({ status: 'IN_PROGRESS', agent_id: user.id || null })
       .eq('id', incident.id)
     if (err) setError(err.message)
+    // Note: we don't optimistically remove here — the realtime UPDATE
+    // handler will evict the row as soon as Postgres confirms the change,
+    // which keeps every connected dashboard in sync.
     setAcceptingId(null)
   }
 

@@ -1,7 +1,9 @@
-from typing import Optional
+import os
+from typing import Any, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 import uvicorn
 
 from valsea import transcribe_audio
@@ -18,13 +20,28 @@ from auth_routes import router as auth_router
 
 app = FastAPI(title="Disaster Call Management System API")
 
+# CORS: explicit allow-list so credentialed requests from Vite work.
+# Note: when allow_credentials=True the wildcard "*" is invalid per spec,
+# so we enumerate the dev origins. Add prod origins here when deploying.
+_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+_extra = os.getenv("CORS_EXTRA_ORIGINS", "").strip()
+if _extra:
+    _ALLOWED_ORIGINS.extend(o.strip() for o in _extra.split(",") if o.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+TRIAGE_WEBHOOK_SECRET = os.getenv("TRIAGE_WEBHOOK_SECRET", "").strip()
 
 app.include_router(auth_router)
 
@@ -91,6 +108,130 @@ async def process_audio(
         raise HTTPException(status_code=400, detail="Missing audio file")
     try:
         return await _process_audio_upload(upload, caller_name, location)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class TriagePayload(BaseModel):
+    """Webhook payload for /api/triage.
+
+    All fields are optional so the endpoint can be called in three modes:
+      1. Raw transcript only  -> Gemini fills in the structured fields.
+      2. Pre-extracted metrics -> insert directly, skip Gemini.
+      3. Hybrid               -> any provided fields override Gemini output.
+    """
+
+    transcript: Optional[str] = None
+    caller_name: Optional[str] = Field(default="Unknown")
+    location: Optional[str] = Field(default="Unknown")
+    incident_type: Optional[str] = None  # "MEDICAL" | "DISASTER"
+    urgency_score: Optional[float] = None
+    stress: Optional[float] = None
+    frustration: Optional[float] = None
+    sentiment: Optional[str] = None
+    action_items: Optional[str] = None
+    content: Optional[str] = None
+    structured_data: Optional[dict[str, Any]] = None
+
+
+def _authorize_triage(
+    webhook_secret: Optional[str],
+    authorization: Optional[str],
+) -> None:
+    """Triage accepts EITHER a matching X-Webhook-Secret OR a valid agent JWT.
+
+    If TRIAGE_WEBHOOK_SECRET is unset we run in open mode (useful for local
+    dev / hackathon demos) so external services can POST without auth.
+    """
+    if TRIAGE_WEBHOOK_SECRET:
+        if webhook_secret and webhook_secret == TRIAGE_WEBHOOK_SECRET:
+            return
+        # fall back to agent Bearer auth
+        require_agent(authorization)
+        return
+    # open mode: no secret configured
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+
+
+@app.post("/api/triage")
+def triage_incident(
+    payload: TriagePayload,
+    x_webhook_secret: Optional[str] = Header(default=None, alias="X-Webhook-Secret"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Webhook entry point for the VALSEA -> Gemini -> Supabase pipeline.
+
+    Receives a JSON body containing either a raw transcript or already-
+    extracted disaster metrics, runs Gemini if needed, and inserts a new row
+    into `incidents`. The Supabase Realtime publication on that table will
+    then push the row to every subscribed dashboard within ~100ms.
+    """
+    _authorize_triage(x_webhook_secret, authorization)
+
+    data: dict[str, Any] = payload.model_dump(exclude_none=True)
+
+    # If the caller only sent a transcript (no urgency_score), run Gemini.
+    if data.get("transcript") and data.get("urgency_score") is None:
+        try:
+            extracted = extract_disaster_data(data["transcript"])
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Gemini extraction failed: {e}",
+            ) from e
+        # Caller-supplied fields take precedence over Gemini output.
+        for key, value in extracted.items():
+            data.setdefault(key, value)
+
+    # Flatten an explicitly-provided structured_data dict (so callers can
+    # send a fully-prebuilt payload from an external triage service).
+    explicit_structured = data.pop("structured_data", None)
+    if isinstance(explicit_structured, dict):
+        for key, value in explicit_structured.items():
+            data.setdefault(key, value)
+
+    data.setdefault("transcript", data.get("content", ""))
+    data.setdefault("incident_type", "DISASTER")
+    data.setdefault("urgency_score", 0.5)
+
+    try:
+        db_response = insert_incident(data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Supabase insert failed: {e}",
+        ) from e
+
+    priority = urgency_to_priority(
+        data.get("urgency_score"),
+        data.get("incident_type"),
+    )
+
+    return {
+        "status": "success",
+        "priority": priority,
+        "message": "Incident triaged and inserted; realtime listeners notified.",
+        "data": {
+            "extracted": data,
+            "db_response": db_response,
+        },
+    }
+
+
+@app.post("/api/triage/audio")
+async def triage_audio(
+    audio: UploadFile = File(...),
+    caller_name: str = Form("Unknown"),
+    location: str = Form("Unknown"),
+    x_webhook_secret: Optional[str] = Header(default=None, alias="X-Webhook-Secret"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Multipart variant of /api/triage: accepts a raw audio file and runs
+    the full VALSEA -> Gemini -> Supabase pipeline."""
+    _authorize_triage(x_webhook_secret, authorization)
+    try:
+        return await _process_audio_upload(audio, caller_name, location)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
