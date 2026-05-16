@@ -56,8 +56,8 @@ def _require_client() -> Groq:
 
 
 def analyze_incident(
-    audio_bytes: bytes,  # accepted for API compatibility — not forwarded (text-only)
-    filename: str,  # accepted for API compatibility — not forwarded
+    _audio_bytes: bytes,  # accepted for API compatibility — not forwarded (text-only)
+    _filename: str,  # accepted for API compatibility — not forwarded
     valsea: dict[str, Any],
     *,
     caller_name_hint: str = "",
@@ -72,7 +72,6 @@ def analyze_incident(
     implementation but are not forwarded — Groq does not support audio input.
     All audio understanding is derived from VALSEA's clarified_transcript.
     """
-    del audio_bytes, filename
     groq_client = _require_client()
 
     clarified = valsea.get("clarified_transcript") or valsea.get("raw_transcript") or ""

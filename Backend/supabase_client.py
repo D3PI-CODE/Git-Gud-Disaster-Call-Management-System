@@ -181,7 +181,7 @@ def serialize_incident(row):
     if row is None:
         return None
 
-    structured: dict[str, Any] = dict(row.get("structured_data") or {})
+    structured: dict[str, Any] = (row.get("structured_data") or {}).copy()
     structured.setdefault("location", "Unknown")
     structured.setdefault("caller_name", "Unknown Caller")
     structured.setdefault("stress", 0)
