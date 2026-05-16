@@ -4,7 +4,7 @@ import uvicorn
 
 from valsea import transcribe_audio
 from gemini import extract_disaster_data
-from supabase_client import insert_disaster_report
+from supabase_client import insert_disaster_report, supabase
 
 app = FastAPI(title="Disaster Call Management System API")
 
@@ -43,6 +43,19 @@ async def process_audio(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/incident/status/{ref_id}")
+async def get_incident_status(ref_id: str):
+    result = supabase.table("incidents") \
+        .select("id, priority, status, created_at") \
+        .ilike("id", f"{ref_id}%") \
+        .limit(1) \
+        .execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    return result.data[0]
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
