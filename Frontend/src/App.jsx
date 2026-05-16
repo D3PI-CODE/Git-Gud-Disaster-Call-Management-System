@@ -5,7 +5,7 @@ import AudioRecorder  from './components/AudioRecorder'
 import StatsBar       from './components/StatsBar'
 import Login          from './components/Login'
 import ProtectedRoute from './components/ProtectedRoute'
-import { supabase, fetchIncidents, subscribeToIncidents } from './lib/supabase'
+import { fetchIncidents, clearAuthSession } from './lib/api'
 import './index.css'
 import './App.css'
 
@@ -65,26 +65,33 @@ function MainApp({ theme, onToggle }) {
   const [agentName,  setAgentName]  = useState('')
 
   useEffect(() => {
-    // Get agent name from localStorage set during login
     const user = JSON.parse(localStorage.getItem('resqnet_user') || '{}')
     setAgentName(user.name || user.email?.split('@')[0] || 'Agent')
 
-    // Load incidents
-    fetchIncidents().then(data => setIncidents(data))
+    let cancelled = false
 
-    // Subscribe to realtime new incidents
-    const ch = subscribeToIncidents(row =>
-      setIncidents(prev => [row, ...prev])
-    )
-    ch.subscribe(s =>
-      setLiveStatus(s === 'SUBSCRIBED' ? 'live' : 'connecting')
-    )
-    return () => supabase.removeChannel(ch)
+    async function load() {
+      try {
+        const data = await fetchIncidents()
+        if (!cancelled) {
+          setIncidents(data)
+          setLiveStatus('live')
+        }
+      } catch {
+        if (!cancelled) setLiveStatus('offline')
+      }
+    }
+
+    load()
+    const id = setInterval(load, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
   }, [])
 
   function handleSignOut() {
-    localStorage.removeItem('resqnet_token')
-    localStorage.removeItem('resqnet_user')
+    clearAuthSession()
     window.location.href = '/login'
   }
 
@@ -115,7 +122,11 @@ function MainApp({ theme, onToggle }) {
           )}
           <div className={`signal-status ${liveStatus}`}>
             <span className="signal-dot" />
-            {liveStatus === 'live' ? 'Signal Active' : 'Connecting...'}
+            {liveStatus === 'live'
+              ? 'Signal Active'
+              : liveStatus === 'offline'
+                ? 'Offline'
+                : 'Connecting...'}
           </div>
           <Clock />
           <ThemeToggle theme={theme} onToggle={onToggle} />
@@ -129,7 +140,13 @@ function MainApp({ theme, onToggle }) {
 
       <div className="app-body">
         <aside className="left-panel">
-          <AudioRecorder />
+          <AudioRecorder
+            onIncidentCreated={async () => {
+              const data = await fetchIncidents()
+              setIncidents(data)
+              setLiveStatus('live')
+            }}
+          />
         </aside>
         <main className="right-panel">
           <Dashboard incidents={incidents} />

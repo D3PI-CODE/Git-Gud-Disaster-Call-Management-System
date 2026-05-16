@@ -1,5 +1,6 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-const TOKEN_KEY = 'resqnet_agent_token'
+const TOKEN_KEY = 'resqnet_token'
+const USER_KEY = 'resqnet_user'
 
 export function getAuthToken() {
   return localStorage.getItem(TOKEN_KEY)
@@ -7,17 +8,17 @@ export function getAuthToken() {
 
 export function setAuthSession(session) {
   localStorage.setItem(TOKEN_KEY, session.access_token)
-  localStorage.setItem('resqnet_agent_user', JSON.stringify(session.user))
+  localStorage.setItem(USER_KEY, JSON.stringify(session.user))
 }
 
 export function clearAuthSession() {
   localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem('resqnet_agent_user')
+  localStorage.removeItem(USER_KEY)
 }
 
 export function getStoredUser() {
   try {
-    return JSON.parse(localStorage.getItem('resqnet_agent_user') || 'null')
+    return JSON.parse(localStorage.getItem(USER_KEY) || 'null')
   } catch {
     return null
   }
