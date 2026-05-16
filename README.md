@@ -1,1 +1,0 @@
-# Git-Gud-Disaster-Call-Management
