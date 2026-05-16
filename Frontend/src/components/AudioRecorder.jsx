@@ -10,6 +10,15 @@ const STEPS = [
   { key: 'saving',      label: 'Saving to dashboard...' },
 ]
 
+const PREFERRED_AUDIO_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+
+function getSupportedMimeType() {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return ''
+  }
+  return PREFERRED_AUDIO_TYPES.find(type => MediaRecorder.isTypeSupported(type)) || ''
+}
+
 function useTimer(active) {
   const [seconds, setSeconds] = useState(0)
   useEffect(() => {
@@ -38,14 +47,24 @@ export default function AudioRecorder() {
   const timer = useTimer(status === 'recording')
 
   async function startRecording() {
+    let stream
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      if (typeof MediaRecorder === 'undefined') {
+        throw new Error('media-recorder-unsupported')
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = getSupportedMimeType()
+      const mr = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream)
+
       chunksRef.current = []
 
       mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       mr.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        const blobType = mr.mimeType || mimeType || chunksRef.current[0]?.type || 'audio/webm'
+        const blob = new Blob(chunksRef.current, { type: blobType })
         setAudioBlob(blob)
         stream.getTracks().forEach(t => t.stop())
       }
@@ -53,10 +72,20 @@ export default function AudioRecorder() {
       mr.start(250)
       mediaRecorderRef.current = mr
       setStatus('recording')
+      setErrorMsg('')
     } catch (err) {
-      console.error('Failed to access microphone:', err)
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop())
+      }
+      console.error('Failed to start audio recording:', err)
       setStatus('error')
-      setErrorMsg('Microphone access denied. Please allow microphone access.')
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setErrorMsg('Microphone access denied. Please allow microphone access.')
+      } else if (err?.name === 'NotSupportedError' || err?.message === 'media-recorder-unsupported') {
+        setErrorMsg('Audio recording is not supported in this browser.')
+      } else {
+        setErrorMsg('Unable to start recording. Please try again.')
+      }
     }
   }
 
@@ -81,7 +110,9 @@ export default function AudioRecorder() {
 
     try {
       const form = new FormData()
-      form.append('audio',       new File([audioBlob], 'call.webm', { type: 'audio/webm' }))
+      const audioType = audioBlob.type || 'audio/webm'
+      const extension = audioType.includes('mp4') ? 'mp4' : 'webm'
+      form.append('audio',       new File([audioBlob], `call.${extension}`, { type: audioType }))
       form.append('caller_name', callerName || 'Unknown')
       form.append('location',    location   || 'Unknown')
 
