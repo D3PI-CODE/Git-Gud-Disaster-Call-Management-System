@@ -1,7 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Sun,
-  Moon,
   MapPin,
   Loader2,
   User,
@@ -10,11 +8,13 @@ import {
   Flame,
   Clock,
   Radio,
+  LogOut,
+  ChevronDown,
 } from 'lucide-react'
 import { supabase, attachAgentToken } from '../lib/supabaseClient'
 import './AgentDashboard.css'
 
-const THEME_KEY = 'resqnet-theme'
+const AGENT_LOCATION_KEY = 'resqnet_agent_location'
 
 /* ─── Helpers ────────────────────────────────────────────── */
 function parseStructured(raw) {
@@ -74,21 +74,13 @@ function syncPillLabel(liveStatus) {
   return 'Syncing'
 }
 
-/* ─── Theme ──────────────────────────────────────────────── */
-function useTheme() {
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem(THEME_KEY) || 'dark',
-  )
-
+/* ─── Lock permanent dark theme on dashboard mount ───────── */
+function usePermanentDark() {
   useEffect(() => {
     const root = document.documentElement
-    root.classList.remove('dark', 'light')
-    root.classList.add(theme)
-    localStorage.setItem(THEME_KEY, theme)
-  }, [theme])
-
-  const toggle = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'))
-  return { toggle, isDark: theme === 'dark' }
+    root.classList.remove('light')
+    root.classList.add('dark')
+  }, [])
 }
 
 /* ─── Sub-components ─────────────────────────────────────── */
@@ -112,20 +104,116 @@ function BrandMark() {
   )
 }
 
-function ThemeToggleButton({ isDark, onToggle }) {
+function AvatarMenu({ agentName, initials, onSignOut }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [activeLocation, setActiveLocation] = useState(
+    () => localStorage.getItem(AGENT_LOCATION_KEY) || 'Colombo, Western Province',
+  )
+  const [locationDraft, setLocationDraft] = useState(activeLocation)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    function handlePointerDown(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setIsOpen(false)
+      }
+    }
+
+    function handleEscape(e) {
+      if (e.key === 'Escape') setIsOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isOpen])
+
+  function toggleMenu() {
+    setIsOpen(prev => {
+      if (!prev) setLocationDraft(activeLocation)
+      return !prev
+    })
+  }
+
+  function saveLocation() {
+    const trimmed = locationDraft.trim()
+    if (!trimmed) return
+    setActiveLocation(trimmed)
+    localStorage.setItem(AGENT_LOCATION_KEY, trimmed)
+  }
+
+  function handleLogout() {
+    setIsOpen(false)
+    onSignOut()
+  }
+
   return (
-    <button
-      type="button"
-      className="btn-theme"
-      onClick={onToggle}
-      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      {isDark ? (
-        <Sun className="btn-theme-icon" aria-hidden />
-      ) : (
-        <Moon className="btn-theme-icon" aria-hidden />
-      )}
-    </button>
+    <div className="avatar-menu" ref={menuRef}>
+      <button
+        type="button"
+        className={`avatar-trigger${isOpen ? ' is-open' : ''}`}
+        onClick={toggleMenu}
+        aria-expanded={isOpen}
+        aria-haspopup="true"
+        title={agentName}
+      >
+        {initials ? (
+          <span className="avatar-trigger-initials">{initials}</span>
+        ) : (
+          <User className="avatar-trigger-icon" aria-hidden />
+        )}
+        <ChevronDown className="avatar-trigger-chevron" aria-hidden />
+      </button>
+
+      <div
+        className={`avatar-dropdown-menu${isOpen ? ' is-open' : ''}`}
+        role="menu"
+        aria-hidden={!isOpen}
+      >
+        <div className="avatar-dropdown-header">
+          <p className="avatar-dropdown-name">{agentName}</p>
+          <p className="avatar-dropdown-role">Field Agent</p>
+        </div>
+
+        <div className="avatar-dropdown-divider" />
+
+        <div className="avatar-dropdown-location">
+          <label className="avatar-dropdown-location-label" htmlFor="agent-location-input">
+            <MapPin className="avatar-dropdown-row-icon" aria-hidden />
+            Change Active Location
+          </label>
+          <div className="avatar-dropdown-location-row">
+            <input
+              id="agent-location-input"
+              type="text"
+              className="avatar-dropdown-input"
+              value={locationDraft}
+              onChange={e => setLocationDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') saveLocation()
+              }}
+              placeholder="e.g. Colombo, Western Province"
+            />
+            <button type="button" className="avatar-dropdown-save" onClick={saveLocation}>
+              Save
+            </button>
+          </div>
+          <p className="avatar-dropdown-location-current">{activeLocation}</p>
+        </div>
+
+        <div className="avatar-dropdown-divider" />
+
+        <button type="button" className="avatar-dropdown-item" onClick={handleLogout} role="menuitem">
+          <LogOut className="avatar-dropdown-row-icon" aria-hidden />
+          Log Out
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -147,8 +235,12 @@ function StatsOverviewBar({ incidents }) {
 
   return (
     <div className="stats-bar">
-      {items.map(({ label, value, modifier }) => (
-        <div key={label} className={`stat-card stat-card--${modifier}`}>
+      {items.map(({ label, value, modifier }, index) => (
+        <div
+          key={label}
+          className={`stat-card stat-card--${modifier}`}
+          style={{ animationDelay: `${index * 0.08}s` }}
+        >
           <span className="stat-card-label">{label}</span>
           <span className="stat-card-value">{value}</span>
         </div>
@@ -200,7 +292,7 @@ function TypeBadge({ isMedical, typeLabel }) {
   )
 }
 
-function IncidentCard({ incident, onAccept, accepting }) {
+function IncidentCard({ incident, onAccept, accepting, staggerIndex }) {
   const structured = parseStructured(incident.structured_data)
   const location = structured.location || 'Location unknown'
   const score = normalizeScore(incident.urgency_score)
@@ -210,7 +302,10 @@ function IncidentCard({ incident, onAccept, accepting }) {
   const transcript = incident.transcript || ''
 
   return (
-    <article className={`incident-card incident-card--${tier}`}>
+    <article
+      className={`incident-card incident-card--${tier}`}
+      style={{ animationDelay: `${Math.min(staggerIndex, 12) * 0.06}s` }}
+    >
       <header className="incident-card-header">
         <div className="incident-card-header-row">
           <TypeBadge isMedical={isMedical} typeLabel={typeLabel} />
@@ -261,7 +356,8 @@ function IncidentCard({ incident, onAccept, accepting }) {
 
 /* ─── Main dashboard ───────────────────────────────────────── */
 export default function AgentDashboard({ onSignOut }) {
-  const { toggle, isDark } = useTheme()
+  usePermanentDark()
+
   const [incidents, setIncidents] = useState([])
   const [acceptingId, setAcceptingId] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -404,20 +500,11 @@ export default function AgentDashboard({ onSignOut }) {
               <span className="sync-pill-text">{syncPillLabel(liveStatus)}</span>
             </div>
 
-            <ThemeToggleButton isDark={isDark} onToggle={toggle} />
-
-            <button
-              type="button"
-              className="btn-profile"
-              onClick={onSignOut}
-              title={agentName}
-            >
-              {initials ? (
-                <span className="btn-profile-initials">{initials}</span>
-              ) : (
-                <User className="btn-profile-icon" aria-hidden />
-              )}
-            </button>
+            <AvatarMenu
+              agentName={agentName}
+              initials={initials}
+              onSignOut={onSignOut}
+            />
           </div>
         </div>
       </header>
@@ -448,12 +535,13 @@ export default function AgentDashboard({ onSignOut }) {
           </div>
         ) : (
           <div className="incident-grid">
-            {incidents.map(incident => (
+            {incidents.map((incident, index) => (
               <IncidentCard
                 key={incident.id}
                 incident={incident}
                 onAccept={handleAccept}
                 accepting={acceptingId === incident.id}
+                staggerIndex={index}
               />
             ))}
           </div>
