@@ -65,7 +65,7 @@ export default function IncidentCard({ incident }) {
     action_items = '',
   } = structured_data || {}
 
-  const caller_name = users?.name || 'Unknown Caller'
+  const caller_name = users?.name || structured_data?.caller_name || 'Unknown Caller'
   const display_priority = incident_type === 'MEDICAL' ? 'critical' : 'high'
 
   const actions = parseActions(action_items)

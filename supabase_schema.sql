@@ -1,54 +1,99 @@
--- 1. Create Enums
-CREATE TYPE incident_type_enum AS ENUM ('MEDICAL', 'DISASTER');
-CREATE TYPE incident_status_enum AS ENUM ('PENDING', 'IN_PROGRESS', 'RESOLVED');
+-- ResQNet schema (idempotent). Run in Supabase SQL Editor or: python Backend/setup_schema.py
 
--- 2. Create Users Table (Callers)
-CREATE TABLE users (
+-- Enums
+DO $$ BEGIN
+  CREATE TYPE incident_type_enum AS ENUM ('MEDICAL', 'DISASTER');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE incident_status_enum AS ENUM ('PENDING', 'IN_PROGRESS', 'RESOLVED');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Callers (telegram / phone)
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     telegram_id VARCHAR UNIQUE,
     name VARCHAR,
     contact_number VARCHAR,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Insert a default "Unknown Caller" for testing MVP without Telegram
-INSERT INTO users (telegram_id, name) VALUES ('SYSTEM_DEFAULT', 'Unknown Caller');
+INSERT INTO users (telegram_id, name)
+VALUES ('SYSTEM_DEFAULT', 'Unknown Caller')
+ON CONFLICT (telegram_id) DO NOTHING;
 
--- 3. Create Agents Table (Responders/Doctors)
--- Links directly to Supabase Auth table
-CREATE TABLE agents (
+-- Agents (linked to Supabase Auth)
+CREATE TABLE IF NOT EXISTS agents (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     name VARCHAR,
-    role VARCHAR DEFAULT 'Responder',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    role VARCHAR DEFAULT 'Agent',
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. Create Incidents Table
-CREATE TABLE incidents (
+-- Incidents
+CREATE TABLE IF NOT EXISTS incidents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
     incident_type incident_type_enum,
-    urgency_score FLOAT,
+    urgency_score FLOAT DEFAULT 0,
     transcript TEXT,
-    structured_data JSONB,
+    structured_data JSONB DEFAULT '{}'::jsonb,
     status incident_status_enum DEFAULT 'PENDING',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. Enable Realtime on Incidents
-ALTER PUBLICATION supabase_realtime ADD TABLE incidents;
+CREATE INDEX IF NOT EXISTS incidents_created_at_idx ON incidents (created_at DESC);
 
--- 6. Trigger to auto-create Agent on Auth Signup
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+-- Realtime
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE incidents;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Auto-create agent profile on signup
+CREATE OR REPLACE FUNCTION public.handle_new_agent()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
-    INSERT INTO public.agents (id, name, role)
-    VALUES (new.id, split_part(new.email, '@', 1), 'Responder');
-    RETURN new;
+  INSERT INTO public.agents (id, name, role)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
+    COALESCE(NEW.raw_user_meta_data->>'role', 'Agent')
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    role = EXCLUDED.role;
+  RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
-CREATE OR REPLACE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+DROP TRIGGER IF EXISTS on_auth_agent_created ON auth.users;
+CREATE TRIGGER on_auth_agent_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_agent();
+
+-- RLS
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE incidents ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "agents read own profile" ON agents;
+CREATE POLICY "agents read own profile" ON agents
+  FOR SELECT TO authenticated USING (id = auth.uid());
+
+DROP POLICY IF EXISTS "agents read incidents" ON incidents;
+CREATE POLICY "agents read incidents" ON incidents
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM agents WHERE agents.id = auth.uid()));
+
+DROP POLICY IF EXISTS "agents read callers" ON users;
+CREATE POLICY "agents read callers" ON users
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM agents WHERE agents.id = auth.uid()));

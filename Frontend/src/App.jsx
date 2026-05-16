@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import Dashboard     from './components/Dashboard'
 import AudioRecorder from './components/AudioRecorder'
 import StatsBar      from './components/StatsBar'
-import { supabase, fetchIncidents, subscribeToIncidents } from './lib/supabase'
+import { fetchIncidents, clearAuthSession } from './lib/api'
 import './index.css'
 import './App.css'
 
@@ -26,14 +26,26 @@ export default function App() {
   const [liveStatus,  setLiveStatus]  = useState('connecting')
 
   useEffect(() => {
-    fetchIncidents().then(data => setIncidents(data))
+    let cancelled = false
 
-    const ch = subscribeToIncidents(row =>
-      setIncidents(prev => [row, ...prev])
-    )
+    async function load() {
+      try {
+        const data = await fetchIncidents()
+        if (!cancelled) {
+          setIncidents(data)
+          setLiveStatus('live')
+        }
+      } catch {
+        if (!cancelled) setLiveStatus('offline')
+      }
+    }
 
-    setLiveStatus('live')
-    return () => supabase.removeChannel(ch)
+    load()
+    const id = setInterval(load, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
   }, [])
 
   return (
@@ -60,11 +72,11 @@ export default function App() {
         <div className="header-right">
           <div className={`signal-status ${liveStatus}`}>
             <span className="signal-dot" />
-            {liveStatus === 'live' ? 'Signal Active' : 'Connecting...'}
+            {liveStatus === 'live' ? 'Signal Active' : liveStatus === 'offline' ? 'Offline' : 'Connecting...'}
           </div>
           <Clock />
           <button 
-            onClick={() => supabase.auth.signOut().then(() => window.location.assign('/login'))}
+            onClick={() => { clearAuthSession(); window.location.assign('/login') }}
             style={{ 
               background: 'transparent', border: '1px solid var(--border-mid)', color: 'var(--txt-muted)', 
               borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer', marginLeft: 16 
@@ -81,7 +93,11 @@ export default function App() {
       {/* Main */}
       <div className="app-body">
         <aside className="left-panel">
-          <AudioRecorder />
+          <AudioRecorder onIncidentCreated={async () => {
+            const data = await fetchIncidents()
+            setIncidents(data)
+            setLiveStatus('live')
+          }} />
         </aside>
         <main className="right-panel">
           <Dashboard incidents={incidents} />

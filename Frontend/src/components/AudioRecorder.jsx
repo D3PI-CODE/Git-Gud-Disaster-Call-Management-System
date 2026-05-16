@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+import { processAudio } from '../lib/api'
 
 const STEPS = [
   { key: 'transcribe', label: 'Transcribing audio via VALSEA' },
@@ -27,7 +26,7 @@ function useTimer(running) {
   return `${String(Math.floor(secs / 60)).padStart(2,'0')}:${String(secs % 60).padStart(2,'0')}`
 }
 
-export default function AudioRecorder() {
+export default function AudioRecorder({ onIncidentCreated }) {
   const [name,      setName]      = useState('')
   const [location,  setLocation]  = useState('')
   const [status,    setStatus]    = useState('idle')   // idle|recording|processing|success|error
@@ -78,22 +77,15 @@ export default function AudioRecorder() {
     }, 2600)
 
     try {
-      const form = new FormData()
-      form.append('audio',       new File([blob], 'incident.webm', { type: 'audio/webm' }))
-      form.append('caller_name', name     || 'Unknown')
-      form.append('location',    location || 'Unknown')
-
-      const res  = await fetch(`${API_URL}/incident`, { method: 'POST', body: form })
+      const data = await processAudio(blob, {
+        caller_name: name || 'Unknown',
+        location: location || 'Unknown',
+      })
       clearInterval(t)
 
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}))
-        throw new Error(e.detail || `Server error ${res.status}`)
-      }
-
-      const data = await res.json()
       setPriority(data.priority)
       setStatus('success')
+      onIncidentCreated?.()
     } catch (e) {
       clearInterval(t)
       setErrMsg(e.message || 'Something went wrong. Please try again.')

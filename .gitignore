@@ -1,25 +1,17 @@
 # ================================
-# OS & Editor (Applied Globally)
+# OS
 # ================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 Thumbs.db
 Desktop.ini
-.idea/
-*.suo
-.ntvs
-*.njsproj
-*.sln
-*.sw?
-
-# VS Code specific
-.vscode/
-!.vscode/extensions.json
-!.vscode/settings.json
 
 # ================================
-# Environment & Secrets
+# Environment & secrets (any path in repo)
 # ================================
-# This matches .env files anywhere in the project
 .env
 .env.*
 !.env.example
@@ -27,31 +19,83 @@ Desktop.ini
 *.key
 
 # ================================
-# Python / Backend (Specific to Backend folder)
+# Python
 # ================================
-Backend/__pycache__/
-Backend/*.py[cod]
-Backend/.venv/
-Backend/venv/
-Backend/env/
-Backend/dist/
-Backend/build/
-Backend/*.egg-info/
-Backend/.pytest_cache/
-Backend/.mypy_cache/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# Virtual environments (root, Backend/, etc.)
+.venv/
+venv/
+env/
+ENV/
+
+# Python build artifacts
+dist/
+build/
 
 # ================================
-# Frontend (Specific to Frontend folder)
+# Node / Frontend
 # ================================
-Frontend/node_modules/
-Frontend/.eslintcache
-Frontend/dist/
-Frontend/.prettierignore
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Vite / bundler
+dist/
+dist-ssr/
+*.local
+.vite/
+.eslintcache
+*.tsbuildinfo
 
 # ================================
-# Logs & Debug
+# Editors & IDE
+# ================================
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*~
+
+# VS Code & Cursor (local / machine-specific)
+.vscode/
+.cursor/
+
+# ================================
+# Logs & temp
 # ================================
 logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
+.cache/
+tmp/
+temp/
+
+# ================================
+# Docker local overrides
+# ================================
+*.env.docker
+docker-compose.override.yml

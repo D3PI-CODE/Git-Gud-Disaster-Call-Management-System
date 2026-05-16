@@ -1,28 +1,29 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { agentLogin, agentSignup } from '../lib/api'
 
 export default function Login() {
-  const [email,    setEmail]    = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error,    setError]    = useState('')
-  const [loading,  setLoading]  = useState(false)
+  const [name, setName] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   const [isSignUp, setIsSignUp] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setLoading(true); setError('')
-    
-    if (isSignUp) {
-      const { error } = await supabase.auth.signUp({ email, password })
-      if (error) { setError(error.message); setLoading(false) }
-      else {
-        setError('Check your email to confirm sign up (or sign in if auto-confirm is enabled).')
-        setLoading(false)
+    setLoading(true)
+    setError('')
+
+    try {
+      if (isSignUp) {
+        await agentSignup(email, password, name || email.split('@')[0])
+      } else {
+        await agentLogin(email, password)
       }
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) { setError(error.message); setLoading(false) }
-      else window.location.assign('/dashboard')
+      window.location.assign('/dashboard')
+    } catch (err) {
+      setError(err.message || 'Authentication failed')
+      setLoading(false)
     }
   }
 
@@ -33,12 +34,11 @@ export default function Login() {
       background: 'var(--bg-root)'
     }}>
       <div style={{
-        width: 360, padding: '36px 32px',
+        width: 380, padding: '36px 32px',
         background: 'var(--bg-card)',
         border: '1px solid var(--border-mid)',
         borderRadius: 12
       }}>
-        {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{
             width: 44, height: 44, borderRadius: 10, margin: '0 auto 12px',
@@ -63,6 +63,13 @@ export default function Login() {
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {isSignUp && (
+            <div className="form-row">
+              <label className="form-label">Agent Name</label>
+              <input className="form-input" type="text" placeholder="Agent name"
+                value={name} onChange={e => setName(e.target.value)} />
+            </div>
+          )}
           <div className="form-row">
             <label className="form-label">Agent Email</label>
             <input className="form-input" type="email" placeholder="agent@resqnet.lk"
@@ -71,24 +78,24 @@ export default function Login() {
           <div className="form-row">
             <label className="form-label">Password</label>
             <input className="form-input" type="password" placeholder="••••••••"
-              value={password} onChange={e => setPassword(e.target.value)} required />
+              value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
           </div>
 
-          {error && <div className="error-banner" style={{ background: error.includes('Check your email') ? 'var(--lime-dim)' : undefined, color: error.includes('Check your email') ? 'var(--lime-base)' : undefined, borderColor: error.includes('Check your email') ? 'var(--lime-border)' : undefined }}>
-            {error.includes('Check your email') ? '✓ ' : '⚠ '} {error}
-          </div>}
+          {error && (
+            <div className="error-banner">⚠ {error}</div>
+          )}
 
           <button className="submit-btn" type="submit" disabled={loading}>
-            {loading ? '⏳  Processing...' : (isSignUp ? '→  Sign Up' : '→  Sign In')}
+            {loading ? '⏳  Processing...' : (isSignUp ? '→  Create Agent Account' : '→  Sign In')}
           </button>
-          
+
           <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <button 
-              type="button" 
-              onClick={() => { setIsSignUp(!isSignUp); setError(''); }}
+            <button
+              type="button"
+              onClick={() => { setIsSignUp(!isSignUp); setError('') }}
               style={{ background: 'none', border: 'none', color: 'var(--txt-muted)', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
             >
-              {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+              {isSignUp ? 'Already have an account? Sign In' : 'Need an agent account? Sign Up'}
             </button>
           </div>
         </form>
