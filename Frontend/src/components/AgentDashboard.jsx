@@ -86,7 +86,9 @@ function useTheme() {
   )
 
   useEffect(() => {
-    document.documentElement.className = theme
+    const root = document.documentElement
+    root.classList.remove('dark', 'light')
+    root.classList.add(theme)
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
 
