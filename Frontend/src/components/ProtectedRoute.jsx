@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { attachAgentToken } from '../lib/supabaseClient'
 import { clearAuthSession, getAuthToken } from '../lib/api'
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+import { API_URL } from '../lib/config'
 
 export default function ProtectedRoute({ children }) {
   const [status, setStatus] = useState('checking') // checking | ok | denied

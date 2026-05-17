@@ -19,9 +19,12 @@ def main() -> int:
     token = json.loads(auth_path.read_text())["token"]
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    with urllib.request.urlopen(f"{RAILWAY_URL}/health", timeout=15, context=ctx) as r:
-        health = json.loads(r.read().decode())
-    print("health", r.status, health.get("status"), health.get("tables_ready"))
+    try:
+        with urllib.request.urlopen(f"{RAILWAY_URL}/health", timeout=15, context=ctx) as r:
+            health = json.loads(r.read().decode())
+        print("health", r.status, health.get("status"), health.get("tables_ready"))
+    except urllib.error.URLError as e:
+        print("health_skip", e)
 
     list_url = f"https://api.vercel.com/v9/projects/{PROJ}/env?teamId={TEAM}"
     with urllib.request.urlopen(urllib.request.Request(list_url, headers=headers), context=ctx) as r:
