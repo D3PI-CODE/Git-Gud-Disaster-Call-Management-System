@@ -7,8 +7,8 @@ from telegram.ext import (
 )
 
 load_dotenv()
-
-TOKEN   = os.getenv("TELEGRAM_TOKEN")
+# Support both naming conventions
+TOKEN   = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 logging.basicConfig(

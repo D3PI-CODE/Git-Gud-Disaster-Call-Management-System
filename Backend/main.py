@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -16,6 +17,8 @@ from supabase_client import (
     supabase,
 )
 from valsea import ValseaError, transcribe_audio
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Disaster Call Management System API")
 
@@ -103,6 +106,74 @@ async def process_audio(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def _upsert_telegram_user(telegram_id: str, name: str, contact_number: str) -> Optional[str]:
+    """Upsert a Telegram caller into the users table and return their UUID."""
+    if not supabase or not telegram_id:
+        return None
+    try:
+        resp = supabase.table("users").upsert(
+            {"telegram_id": telegram_id, "name": name or "Unknown", "contact_number": contact_number},
+            on_conflict="telegram_id",
+        ).execute()
+        rows = resp.data or []
+        if rows and isinstance(rows[0], dict):
+            return rows[0].get("id")
+    except Exception as exc:
+        logger.warning("Could not upsert telegram user %s: %s", telegram_id, exc)
+    return None
+
+
+def _get_default_user_id() -> Optional[str]:
+    """Return the UUID of the SYSTEM_DEFAULT sentinel user."""
+    if not supabase:
+        return None
+    try:
+        resp = (
+            supabase.table("users")
+            .select("id")
+            .eq("telegram_id", "SYSTEM_DEFAULT")
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        if rows and isinstance(rows[0], dict):
+            return rows[0].get("id")
+    except Exception as exc:
+        logger.warning("Could not fetch SYSTEM_DEFAULT user: %s", exc)
+    return None
+
+
+def _persist_incident(record: dict, user_id: Optional[str]) -> Optional[str]:
+    """Insert the processed incident into Supabase and return the DB-generated UUID."""
+    if not supabase:
+        return None
+
+    raw_type = (record.get("incident_type") or "disaster").upper()
+    db_incident_type = raw_type if raw_type in ("MEDICAL", "DISASTER") else "DISASTER"
+
+    structured_data: dict = dict(record.get("structured_data") or {})
+    structured_data.setdefault("caller_name", record.get("caller_name") or "Unknown Caller")
+    structured_data.setdefault("content", structured_data.get("summary", ""))
+
+    db_payload = {
+        "user_id": user_id,
+        "incident_type": db_incident_type,
+        "urgency_score": float(record.get("urgency_score") or record.get("urgency") or 0),
+        "transcript": record.get("transcript") or "",
+        "status": "PENDING",
+        "structured_data": structured_data,
+    }
+
+    try:
+        db_resp = supabase.table("incidents").insert(db_payload).execute()
+        rows = db_resp.data or []
+        if rows and isinstance(rows[0], dict):
+            return rows[0].get("id")
+    except Exception as exc:
+        logger.error("Supabase insert failed: %s", exc)
+    return None
+
+
 @app.post("/incident")
 async def create_incident(
     audio: UploadFile = File(...),
@@ -131,11 +202,23 @@ async def create_incident(
             source=source,
         )
 
+        record = result["record"]
+
+        # Persist to Supabase — this was the missing step
+        user_id = (
+            _upsert_telegram_user(telegram_id, caller_name, contact_number)
+            if telegram_id
+            else _get_default_user_id()
+        )
+        db_id = _persist_incident(record, user_id)
+        if db_id:
+            result["id"] = db_id  # Replace local uuid4 with actual DB id
+
         return {
             "id": result["id"],
             "priority": result["priority"],
             "status": "open",
-            "record": result["record"],
+            "record": record,
             "analysis": {
                 "valsea": result["valsea"],
                 "gemini": result["gemini"],
@@ -214,15 +297,20 @@ async def get_incident_status(ref_id: str):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
 
+    # PostgREST cannot pattern-match on UUID columns directly, so we fetch recent
+    # incidents and do the prefix match in Python (acceptable for demo-scale data).
     result = (
         supabase.table("incidents")
         .select("id, urgency_score, incident_type, status, created_at")
-        .ilike("id", f"{ref_id}%")
-        .limit(1)
+        .order("created_at", desc=True)
+        .limit(500)
         .execute()
     )
 
-    rows = result.data or []
+    rows = [
+        r for r in (result.data or [])
+        if isinstance(r, dict) and str(r.get("id", "")).lower().startswith(ref_id.lower())
+    ]
     if not rows:
         raise HTTPException(status_code=404, detail="Incident not found")
 

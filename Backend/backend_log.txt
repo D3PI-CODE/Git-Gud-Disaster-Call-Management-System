@@ -1,0 +1,29 @@
+INFO:     Started server process [29848]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:61680 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:61541 - "GET /incident/status/ea0fc16a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49907 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61505 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:60964 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60968 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60970 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60972 - "POST /incident HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55893 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+Did not find LF at end of headers (found 65)
+INFO:     127.0.0.1:64737 - "POST /incident HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:53137 - "POST /incident HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64704 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:60334 - "GET /incident/status/47acbe80 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50987 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:64391 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:49222 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:50101 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:62891 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:56272 - "OPTIONS /api/incidents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56272 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:55719 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:56459 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:52434 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:62975 - "GET /api/incidents HTTP/1.1" 401 Unauthorized
