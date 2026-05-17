@@ -68,6 +68,7 @@ _ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:4173",
     "http://127.0.0.1:4173",
+    "https://resqnetfrontend.vercel.app",
 ]
 _extra = os.getenv("CORS_EXTRA_ORIGINS", "").strip()
 if _extra:
@@ -76,6 +77,7 @@ if _extra:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
