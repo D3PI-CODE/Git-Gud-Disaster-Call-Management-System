@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
+import { attachAgentToken } from '../lib/supabaseClient'
+import { clearAuthSession, getAuthToken } from '../lib/api'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -9,12 +11,14 @@ export default function ProtectedRoute({ children }) {
   useEffect(() => {
     // JWT lives in sessionStorage (tab-scoped). If the tab was just opened
     // or the user signed out, there is no token and we bounce to /login.
-    const token = sessionStorage.getItem('resqnet_token')
+    const token = getAuthToken()
 
     if (!token) {
       setStatus('denied')
       return
     }
+
+    attachAgentToken(token)
 
     fetch(`${API_URL}/api/auth/session`, {
       headers: { Authorization: `Bearer ${token}` }
@@ -23,8 +27,7 @@ export default function ProtectedRoute({ children }) {
         if (!res.ok) {
           // Token was rejected by the backend (expired/revoked). Clear it so
           // the next mount doesn't loop trying the same dead token.
-          sessionStorage.removeItem('resqnet_token')
-          sessionStorage.removeItem('resqnet_user')
+          clearAuthSession()
           setStatus('denied')
           return
         }

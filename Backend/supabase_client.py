@@ -1,5 +1,8 @@
+import json
 import os
 import re
+import time
+from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -214,6 +217,46 @@ _CLAIM_REASONS = {
     "AGENT_NOT_REGISTERED",
 }
 
+_DEBUG_LOG_PATH = Path("/Users/d3pi/.cursor/debug-logs/debug-1a86c0.log")
+
+
+def _agent_debug_log(
+    location: str,
+    message: str,
+    data: dict,
+    *,
+    hypothesis_id: str = "H1",
+) -> None:
+    # #region agent log
+    try:
+        payload = {
+            "sessionId": "1a86c0",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except OSError:
+        pass
+    # #endregion
+
+
+def _exception_blob(exc: Exception) -> str:
+    haystacks: list[str] = [str(exc)]
+    for attr in ("message", "details", "hint", "code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, str):
+            haystacks.append(value)
+    return " | ".join(haystacks).upper()
+
+
+def _is_rpc_missing_error(exc: Exception) -> bool:
+    blob = _exception_blob(exc)
+    return "PGRST202" in blob or "COULD NOT FIND THE FUNCTION" in blob
+
 
 def _parse_claim_error(exc: Exception) -> ClaimError:
     """Map an exception raised by supabase.rpc('claim_incident', ...) onto a
@@ -221,16 +264,70 @@ def _parse_claim_error(exc: Exception) -> ClaimError:
     through the exception's str()/`.message`/`.details` attributes depending
     on the underlying transport; we scan all of them so we are resilient to
     version drift in the client library."""
-    haystacks: list[str] = [str(exc)]
-    for attr in ("message", "details", "hint", "code"):
-        value = getattr(exc, attr, None)
-        if isinstance(value, str):
-            haystacks.append(value)
-    blob = " | ".join(haystacks).upper()
+    blob = _exception_blob(exc)
     for token in _CLAIM_REASONS:
         if token in blob:
             return ClaimError(token, str(exc))
     return ClaimError("UNKNOWN", str(exc))
+
+
+def _claim_incident_direct(incident_id: str, agent_id: str) -> dict:
+    """Service-role conditional update when `claim_incident` RPC is not deployed.
+
+    Uses PostgREST filters so only PENDING + unassigned rows are updated. Less
+    strict than FOR UPDATE but unblocks the dashboard until the SQL function
+    is applied via supabase_schema.sql.
+    """
+    agent_resp = (
+        supabase.table("agents").select("id").eq("id", agent_id).limit(1).execute()
+    )
+    if not agent_resp.data:
+        raise ClaimError("AGENT_NOT_REGISTERED", f"Agent {agent_id} not registered")
+
+    response = (
+        supabase.table("incidents")
+        .update({"status": "IN_PROGRESS", "agent_id": agent_id})
+        .eq("id", incident_id)
+        .eq("status", "PENDING")
+        .is_("agent_id", "null")
+        .execute()
+    )
+    rows = response.data or []
+    if rows:
+        return rows[0]
+
+    check = (
+        supabase.table("incidents")
+        .select("id, status, agent_id")
+        .eq("id", incident_id)
+        .limit(1)
+        .execute()
+    )
+    if not check.data:
+        raise ClaimError("INCIDENT_NOT_FOUND", f"Incident {incident_id} not found")
+
+    existing = check.data[0]
+    existing_status = existing.get("status")
+    existing_agent = existing.get("agent_id")
+
+    # Idempotent: same agent clicking Accept again on a case they already own.
+    if (
+        existing_status == "IN_PROGRESS"
+        and existing_agent
+        and str(existing_agent) == str(agent_id)
+    ):
+        _agent_debug_log(
+            "supabase_client.py:_claim_incident_direct",
+            "direct_claim_idempotent",
+            {
+                "incident_id": incident_id,
+                "agent_id": agent_id,
+                "status": existing_status,
+            },
+        )
+        return fetch_incident_by_id(incident_id) or existing
+
+    raise ClaimError("ALREADY_CLAIMED", "Incident is no longer claimable")
 
 
 def claim_incident(incident_id: str, agent_id: str) -> dict:
@@ -262,7 +359,26 @@ def claim_incident(incident_id: str, agent_id: str) -> dict:
             {"p_incident_id": incident_id, "p_agent_id": agent_id},
         ).execute()
     except Exception as exc:
-        raise _parse_claim_error(exc) from exc
+        if _is_rpc_missing_error(exc):
+            _agent_debug_log(
+                "supabase_client.py:claim_incident",
+                "rpc_missing_fallback_direct",
+                {"incident_id": incident_id, "agent_id": agent_id},
+            )
+            row = _claim_incident_direct(incident_id, agent_id)
+            _agent_debug_log(
+                "supabase_client.py:claim_incident",
+                "direct_claim_ok",
+                {"incident_id": incident_id, "status": row.get("status")},
+            )
+            return row
+        parsed = _parse_claim_error(exc)
+        _agent_debug_log(
+            "supabase_client.py:claim_incident",
+            "rpc_claim_failed",
+            {"reason": parsed.reason, "message": parsed.message[:200]},
+        )
+        raise parsed from exc
 
     rows = response.data or []
     if not rows:

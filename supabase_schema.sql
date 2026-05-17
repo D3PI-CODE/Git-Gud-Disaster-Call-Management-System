@@ -120,11 +120,23 @@ CREATE POLICY "agents read claimable or own incidents" ON incidents
     )
   );
 
--- Direct UPDATE from the client is intentionally NOT granted. All status /
--- agent_id transitions must go through the claim_incident() function below
--- (or other future RPCs), which take an explicit row lock to prevent two
--- agents from both believing they won the race.
+-- Primary write path: claim_incident() RPC (SECURITY DEFINER, row lock).
+-- Optional defense-in-depth if the client ever uses PostgREST UPDATE directly:
 DROP POLICY IF EXISTS "agents update incidents" ON incidents;
+DROP POLICY IF EXISTS "agents update claimable or own incidents" ON incidents;
+CREATE POLICY "agents update claimable or own incidents" ON incidents
+  FOR UPDATE TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM agents WHERE agents.id = auth.uid())
+    AND (
+      (status = 'PENDING' AND agent_id IS NULL)
+      OR agent_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    agent_id = auth.uid()
+    AND status = 'IN_PROGRESS'
+  );
 
 DROP POLICY IF EXISTS "agents read callers" ON users;
 CREATE POLICY "agents read callers" ON users
@@ -195,3 +207,5 @@ $$;
 REVOKE ALL ON FUNCTION public.claim_incident(uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.claim_incident(uuid, uuid)
   TO authenticated, service_role;
+
+NOTIFY pgrst, 'reload schema';

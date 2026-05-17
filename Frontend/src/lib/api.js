@@ -10,11 +10,15 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
  *   - shrinks the blast radius of XSS exfiltration (a malicious script
  *     loaded in a different tab cannot read this tab's token).
  */
-const TOKEN_KEY = 'resqnet_token'
+const TOKEN_KEY = 'resqnet_auth_token'
+const LEGACY_TOKEN_KEY = 'resqnet_token'
 const USER_KEY = 'resqnet_user'
 
 export function getAuthToken() {
-  return sessionStorage.getItem(TOKEN_KEY)
+  return (
+    sessionStorage.getItem(TOKEN_KEY) ||
+    sessionStorage.getItem(LEGACY_TOKEN_KEY)
+  )
 }
 
 /**
@@ -29,14 +33,16 @@ export function getAuthToken() {
  */
 export function setAuthSession(session) {
   sessionStorage.setItem(TOKEN_KEY, session.access_token)
+  sessionStorage.removeItem(LEGACY_TOKEN_KEY)
   sessionStorage.setItem(USER_KEY, JSON.stringify(session.user))
   attachAgentToken(session.access_token)
 }
 
 export function clearAuthSession() {
   sessionStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(LEGACY_TOKEN_KEY)
   sessionStorage.removeItem(USER_KEY)
-  supabase.realtime.setAuth(null)
+  attachAgentToken(null)
 }
 
 export function getStoredUser() {
