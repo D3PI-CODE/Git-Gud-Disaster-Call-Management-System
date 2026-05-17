@@ -85,5 +85,8 @@ Python application for processing incidents and managing data logic.
 
 - **Email**: agent@gmail.com
 - **Password**: agent123
+
+## Deployment
+
 - **Agent Dashboard Frontend URL**: https://resqnetfrontend.vercel.app
 - **Telegram Bot Username**: @GitGud_ResQNet_bot
