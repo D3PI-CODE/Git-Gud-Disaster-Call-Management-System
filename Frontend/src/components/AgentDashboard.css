@@ -64,6 +64,11 @@
   --btn-accept-text: #0b0f19;
   --btn-accept-shadow: 0 8px 20px rgba(168, 255, 62, 0.15);
 
+  --btn-resolve-gradient: linear-gradient(135deg, #34d399, #059669);
+  --btn-resolve-text: #042f1a;
+  --btn-resolve-shadow: 0 8px 20px rgba(52, 211, 153, 0.2);
+  --resolve-success-glow: rgba(52, 211, 153, 0.35);
+
   --sync-live: #34d399;
   --sync-error: #f43f5e;
 
@@ -1226,6 +1231,80 @@
   animation: spin 0.8s linear infinite;
 }
 
+/* ─── Resolve button ──────────────────────────────────────── */
+.btn-resolve {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px var(--space-md);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--btn-resolve-gradient);
+  color: var(--btn-resolve-text);
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: var(--btn-resolve-shadow);
+  transition:
+    transform 0.2s var(--ease-smooth),
+    opacity 0.2s,
+    box-shadow 0.2s,
+    background 0.25s var(--ease-smooth);
+}
+
+.btn-resolve:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(52, 211, 153, 0.32);
+}
+
+.btn-resolve:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-resolve:disabled {
+  cursor: not-allowed;
+}
+
+.btn-resolve:disabled:not(.btn-resolve--success) {
+  opacity: 0.45;
+}
+
+.btn-resolve--success {
+  background: linear-gradient(135deg, #6ee7b7, #34d399);
+  color: #022c1a;
+  opacity: 1;
+  box-shadow: 0 0 24px var(--resolve-success-glow);
+}
+
+.btn-resolve-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.btn-resolve-icon--spin {
+  animation: spin 0.8s linear infinite;
+}
+
+.incident-card--resolve-success {
+  border-color: rgba(52, 211, 153, 0.55);
+  box-shadow:
+    var(--shadow-panel),
+    0 0 32px 6px rgba(52, 211, 153, 0.22);
+  animation: resolveSuccessPulse 0.35s var(--ease-cinematic) both;
+}
+
+.incident-card--exit {
+  pointer-events: none;
+  animation: resolveCardExit 0.52s var(--ease-cinematic) forwards;
+}
+
 /* ─── Keyframe animations ─────────────────────────────────── */
 @keyframes cardEntrance {
   from {
@@ -1278,6 +1357,38 @@
   }
 }
 
+@keyframes resolveSuccessPulse {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  40% {
+    transform: scale(1.02);
+    filter: brightness(1.15);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes resolveCardExit {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    max-height: 800px;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.96);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
+  }
+}
+
 /* Respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .incident-card,
@@ -1296,6 +1407,11 @@
   }
 
   .incident-card--critical .urgency-score {
+    animation: none;
+  }
+
+  .incident-card--resolve-success,
+  .incident-card--exit {
     animation: none;
   }
 }

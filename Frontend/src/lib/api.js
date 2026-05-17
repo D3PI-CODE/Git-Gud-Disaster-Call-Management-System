@@ -151,6 +151,13 @@ export async function claimIncident(incidentId) {
   })
 }
 
+/** Close an IN_PROGRESS case assigned to the logged-in agent (status -> RESOLVED). */
+export async function resolveIncident(incidentId) {
+  return apiFetch(`/api/incidents/${encodeURIComponent(incidentId)}/resolve`, {
+    method: 'POST',
+  })
+}
+
 export async function processAudio(blob, { caller_name, location }) {
   const form = new FormData()
   form.append('audio', new File([blob], 'incident.webm', { type: 'audio/webm' }))

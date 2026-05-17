@@ -36,6 +36,15 @@ class ClaimError(Exception):
         self.message = message or reason
 
 
+class ResolveError(Exception):
+    """Raised by resolve_incident() when the database refuses to close a case."""
+
+    def __init__(self, reason: str, message: str = ""):
+        super().__init__(message or reason)
+        self.reason = reason
+        self.message = message or reason
+
+
 def normalize_supabase_url(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
@@ -218,6 +227,7 @@ _CLAIM_REASONS = {
 }
 
 _DEBUG_LOG_PATH = Path("/Users/d3pi/.cursor/debug-logs/debug-1a86c0.log")
+_DEBUG_LOG_PATH_C791F6 = Path("/Users/d3pi/.cursor/debug-logs/debug-c791f6.log")
 
 
 def _agent_debug_log(
@@ -226,19 +236,26 @@ def _agent_debug_log(
     data: dict,
     *,
     hypothesis_id: str = "H1",
+    session_id: str = "1a86c0",
 ) -> None:
     # #region agent log
     try:
         payload = {
-            "sessionId": "1a86c0",
+            "sessionId": session_id,
             "hypothesisId": hypothesis_id,
             "location": location,
             "message": message,
             "data": data,
             "timestamp": int(time.time() * 1000),
         }
-        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload) + "\n")
+        line = json.dumps(payload) + "\n"
+        for path in (
+            {_DEBUG_LOG_PATH, _DEBUG_LOG_PATH_C791F6}
+            if session_id == "c791f6"
+            else {_DEBUG_LOG_PATH}
+        ):
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
     except OSError:
         pass
     # #endregion
@@ -392,6 +409,173 @@ def claim_incident(incident_id: str, agent_id: str) -> dict:
     return row
 
 
+_RESOLVE_REASONS = {
+    "NOT_OWNED_OR_NOT_ACTIVE",
+    "INCIDENT_NOT_FOUND",
+    "AGENT_NOT_REGISTERED",
+}
+
+
+def _parse_resolve_error(exc: Exception) -> ResolveError:
+    blob = _exception_blob(exc)
+    for token in _RESOLVE_REASONS:
+        if token in blob:
+            return ResolveError(token, str(exc))
+    return ResolveError("UNKNOWN", str(exc))
+
+
+def _resolve_incident_direct(incident_id: str, agent_id: str) -> dict:
+    """Service-role resolve when `resolve_incident` RPC is missing or returns no row."""
+    agent_resp = (
+        supabase.table("agents").select("id").eq("id", agent_id).limit(1).execute()
+    )
+    if not agent_resp.data:
+        raise ResolveError("AGENT_NOT_REGISTERED", f"Agent {agent_id} not registered")
+
+    check = (
+        supabase.table("incidents")
+        .select("id, status, agent_id")
+        .eq("id", incident_id)
+        .limit(1)
+        .execute()
+    )
+    if not check.data:
+        raise ResolveError("INCIDENT_NOT_FOUND", f"Incident {incident_id} not found")
+
+    existing = check.data[0]
+    existing_status = str(existing.get("status") or "").upper()
+    existing_agent = existing.get("agent_id")
+    agent_match = (
+        existing_agent is not None and str(existing_agent) == str(agent_id)
+    )
+
+    if existing_status == "RESOLVED" and agent_match:
+        return fetch_incident_by_id(incident_id) or existing
+
+    if existing_status != "IN_PROGRESS" or not agent_match:
+        _agent_debug_log(
+            "supabase_client.py:_resolve_incident_direct",
+            "resolve_preflight_rejected",
+            {
+                "incident_id": incident_id,
+                "request_agent_id": agent_id,
+                "existing_status": existing_status,
+                "existing_agent_id": str(existing_agent) if existing_agent else None,
+                "agent_match": agent_match,
+            },
+            hypothesis_id="H6-H8",
+            session_id="c791f6",
+        )
+        raise ResolveError(
+            "NOT_OWNED_OR_NOT_ACTIVE",
+            "Incident is not an active case owned by this agent",
+        )
+
+    response = (
+        supabase.table("incidents")
+        .update({"status": "RESOLVED"})
+        .eq("id", incident_id)
+        .select(INCIDENT_SELECT)
+        .execute()
+    )
+    rows = response.data or []
+    if rows:
+        _agent_debug_log(
+            "supabase_client.py:_resolve_incident_direct",
+            "direct_resolve_ok",
+            {
+                "incident_id": incident_id,
+                "status": rows[0].get("status"),
+            },
+            hypothesis_id="H8",
+            session_id="c791f6",
+        )
+        return rows[0]
+
+    after = (
+        supabase.table("incidents")
+        .select("id, status, agent_id")
+        .eq("id", incident_id)
+        .limit(1)
+        .execute()
+    )
+    after_row = (after.data or [None])[0]
+    if (
+        after_row
+        and after_row.get("status") == "RESOLVED"
+        and str(after_row.get("agent_id") or "") == str(agent_id)
+    ):
+        return fetch_incident_by_id(incident_id) or after_row
+
+    _agent_debug_log(
+        "supabase_client.py:_resolve_incident_direct",
+        "direct_resolve_update_empty",
+        {
+            "incident_id": incident_id,
+            "request_agent_id": agent_id,
+            "after_status": after_row.get("status") if after_row else None,
+            "after_agent_id": str(after_row.get("agent_id")) if after_row else None,
+        },
+        hypothesis_id="H8",
+        session_id="c791f6",
+    )
+    raise ResolveError(
+        "NOT_OWNED_OR_NOT_ACTIVE",
+        "Incident is not an active case owned by this agent",
+    )
+
+
+def resolve_incident(incident_id: str, agent_id: str) -> dict:
+    """Close an IN_PROGRESS case assigned to `agent_id` (status -> RESOLVED)."""
+    if not supabase:
+        raise ResolveError("UNKNOWN", "Supabase client is not initialized")
+    if not incident_id or not agent_id:
+        raise ResolveError(
+            "INCIDENT_NOT_FOUND" if not incident_id else "AGENT_NOT_REGISTERED",
+            "Missing incident_id or agent_id",
+        )
+
+    try:
+        response = supabase.rpc(
+            "resolve_incident",
+            {"p_incident_id": incident_id, "p_agent_id": agent_id},
+        ).execute()
+    except Exception as exc:
+        if _is_rpc_missing_error(exc):
+            _agent_debug_log(
+                "supabase_client.py:resolve_incident",
+                "rpc_missing_fallback_direct",
+                {"incident_id": incident_id, "agent_id": agent_id},
+                hypothesis_id="H1",
+                session_id="c791f6",
+            )
+            return _resolve_incident_direct(incident_id, agent_id)
+        parsed = _parse_resolve_error(exc)
+        _agent_debug_log(
+            "supabase_client.py:resolve_incident",
+            "rpc_resolve_failed",
+            {"reason": parsed.reason, "message": parsed.message[:200]},
+            hypothesis_id="H1",
+        )
+        raise parsed from exc
+
+    rows = response.data or []
+    if not rows:
+        _agent_debug_log(
+            "supabase_client.py:resolve_incident",
+            "rpc_empty_fallback_direct",
+            {"incident_id": incident_id, "agent_id": agent_id},
+            hypothesis_id="H9",
+            session_id="c791f6",
+        )
+        return _resolve_incident_direct(incident_id, agent_id)
+
+    row = rows[0] if isinstance(rows, list) else rows
+    if not isinstance(row, dict):
+        raise ResolveError("UNKNOWN", "Unexpected resolve response shape")
+    return row
+
+
 def fetch_incident_by_id(incident_id: str):
     """Fetch a single incident by its full UUID. Returns None when not found."""
     if not supabase:
@@ -430,7 +614,7 @@ def serialize_incident(row):
     if row is None:
         return None
 
-    structured: dict[str, Any] = (row.get("structured_data") or {}).copy()
+    structured: dict[str, Any] = dict(row.get("structured_data") or {})
     structured.setdefault("location", "Unknown")
     structured.setdefault("caller_name", "Unknown Caller")
     structured.setdefault("stress", 0)
@@ -441,8 +625,6 @@ def serialize_incident(row):
 
     raw_users = row.get("users")
     users = raw_users if isinstance(raw_users, dict) else None
-    urgency_score = row.get("urgency_score")
-    incident_type = row.get("incident_type")
 
     # Prefer the priority stored by the full pipeline over re-deriving from
     # urgency_score alone (which ignores stress and the LLM's triage judgment).
