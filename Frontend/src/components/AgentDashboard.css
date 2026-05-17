@@ -1059,6 +1059,64 @@
   opacity: 0.75;
 }
 
+/* ─── Caller info (name + contact number) ─────────────────── */
+.caller-info-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.caller-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+}
+
+.caller-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  opacity: 0.75;
+  color: var(--icon-accent);
+}
+
+.caller-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* Content = short one-line headline from the incident */
+.incident-content {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-primary, #e2e8f0);
+  letter-spacing: 0.01em;
+}
+
+/* Summary = full dispatcher paragraph, visually distinct from the headline */
+.incident-summary {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-muted, #94a3b8);
+  font-style: italic;
+}
+
 .incident-transcript {
   margin: 0;
   display: -webkit-box;

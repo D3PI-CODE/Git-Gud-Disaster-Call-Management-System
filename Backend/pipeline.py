@@ -12,19 +12,28 @@ from gemini import analyze_incident
 from valsea import ValseaError, process_audio
 
 
+_PRIORITY_ORDER = ["low", "medium", "high", "critical"]
+
+
 def _normalize_priority(priority: str | None, urgency: float, stress: float) -> str:
+    # Derive a floor from measured voice metrics (normalized 0.0–1.0 values).
+    if urgency >= 0.75 or stress >= 0.8:
+        metric_floor = "critical"
+    elif urgency >= 0.55 or stress >= 0.6:
+        metric_floor = "high"
+    elif urgency >= 0.35 or stress >= 0.4:
+        metric_floor = "medium"
+    else:
+        metric_floor = "low"
+
     if priority:
         p = priority.strip().lower()
-        if p in ("critical", "high", "medium", "low"):
-            return p
+        if p in _PRIORITY_ORDER:
+            # Return whichever is higher: LLM judgment or metrics-based floor.
+            # This prevents a confused LLM from downgrading a genuinely urgent call.
+            return _PRIORITY_ORDER[max(_PRIORITY_ORDER.index(p), _PRIORITY_ORDER.index(metric_floor))]
 
-    if urgency >= 0.75 or stress >= 0.8:
-        return "critical"
-    if urgency >= 0.55 or stress >= 0.6:
-        return "high"
-    if urgency >= 0.35 or stress >= 0.4:
-        return "medium"
-    return "low"
+    return metric_floor
 
 
 def build_structured_data(
@@ -36,11 +45,14 @@ def build_structured_data(
     source: str,
 ) -> dict[str, Any]:
     """JSONB payload for incidents.structured_data (ERD-aligned)."""
+    urgency = float(gemini_result.get("urgency", valsea.get("urgency", 0)))
     return {
+        "content": gemini_result.get("content", ""),
         "summary": gemini_result.get("summary", ""),
         "main_points": gemini_result.get("main_points", []),
         "location": location,
         "priority": priority,
+        "urgency": urgency,
         "sentiment": (gemini_result.get("sentiment") or valsea.get("sentiment", "neutral")).lower(),
         "tone": gemini_result.get("tone") or valsea.get("voice_tone", "neutral"),
         "stress_level": gemini_result.get("stress_level", "moderate"),

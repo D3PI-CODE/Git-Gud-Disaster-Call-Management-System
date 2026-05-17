@@ -3,6 +3,7 @@ import {
   MapPin,
   Loader2,
   User,
+  Phone,
   Activity,
   ShieldAlert,
   Flame,
@@ -321,25 +322,120 @@ function StatsOverviewBar({ incidents }) {
   )
 }
 
-function StructuredTags({ data }) {
-  const skip = new Set(['location', 'action_items'])
-  const entries = Object.entries(data).filter(
-    ([k, v]) => !skip.has(k) && v != null && String(v).trim() !== '',
-  )
+// Fields handled by dedicated card sections or not fit for tag display
+const STRUCTURED_TAG_SKIP = new Set([
+  'location', 'action_items', 'valsea', 'summary', 'content',
+  'main_points', 'priority', 'tone', 'urgency', 'source',
+  'caller_name', 'transcript',
+])
 
-  if (entries.length === 0) return null
+// Only show these specific keys as metadata tags (allowlist approach)
+const STRUCTURED_TAG_ALLOW = new Set([
+  'stress_level', 'sentiment', 'language', 'stress', 'frustration',
+  'caller_name', 'incident_type',
+])
+
+// Tags that are numeric (0–1 scale) → displayed as a percentage
+const NUMERIC_TAG_KEYS = new Set(['stress', 'frustration'])
+
+function StructuredTags({ data, incidentType }) {
+  const entries = Object.entries(data).filter(([k, v]) => {
+    if (!STRUCTURED_TAG_ALLOW.has(k)) return false
+    if (v == null || String(v).trim() === '' || String(v) === '0') return false
+    // Skip near-zero numerics (not meaningful to display)
+    if (typeof v === 'number' && v < 0.05) return false
+    // incident_type comes from the incident row, skip if passed separately
+    if (k === 'incident_type') return false
+    return true
+  })
+
+  // Add incident_type from the prop if available
+  const extra = incidentType ? [['type', incidentType]] : []
+  const allEntries = [...extra, ...entries]
+
+  if (allEntries.length === 0) return null
 
   return (
     <div className="tag-container">
-      {entries.map(([key, val]) => (
-        <span key={key} className="tag-pill">
-          <span className="tag-pill-key">{key.replace(/_/g, ' ')}</span>
-          <span className="tag-pill-sep">·</span>
-          <span>{String(val).slice(0, 48)}</span>
-        </span>
-      ))}
+      {allEntries.map(([key, val]) => {
+        const display = NUMERIC_TAG_KEYS.has(key)
+          ? `${Math.round(Number(val) * 100)}%`
+          : String(val)
+        return (
+          <span key={key} className={`tag-pill tag-pill--${key.replace(/_/g, '-')}`}>
+            <span className="tag-pill-key">{key.replace(/_/g, ' ')}</span>
+            <span className="tag-pill-sep">·</span>
+            <span>{display}</span>
+          </span>
+        )
+      })}
     </div>
   )
+}
+
+/**
+ * Return a short description for the card headline.
+ * - New records: structured_data.content is a distinct 1-sentence summary.
+ * - Old records: content === summary (backend set them equal); extract only
+ *   the first sentence so they don't look identical on the card.
+ */
+function deriveContent(structured) {
+  const content = String(structured.content || '').trim()
+  const summary = String(structured.summary || '').trim()
+
+  if (!content) return summary.split(/\.\s+/)[0] || ''
+
+  // If backend stored content = summary (pre-fix data), extract first sentence
+  if (content === summary) {
+    const first = content.split(/\.\s+/)[0]
+    return first.endsWith('.') ? first : first + (first ? '.' : '')
+  }
+
+  return content
+}
+
+/**
+ * Strip the portion of `summary` that duplicates `content`.
+ *
+ * Two strategies:
+ *  1. Exact prefix: summary starts with the content text (case-insensitive).
+ *  2. Word-overlap: the first sentence of summary shares ≥60% of significant
+ *     words with content — common for old records where the LLM reused the
+ *     same opening phrase.
+ *
+ * Returns the remainder after the overlapping prefix is removed, or the
+ * original summary if no meaningful overlap is found.
+ */
+function trimRedundantPrefix(content, summary) {
+  if (!summary || !content) return summary
+
+  const c = content.trim()
+  const s = summary.trim()
+
+  // 1. Exact prefix match (case-insensitive)
+  if (s.toLowerCase().startsWith(c.toLowerCase())) {
+    return s.slice(c.length).replace(/^[\s.,]+/, '').trim()
+  }
+
+  // 2. Word-overlap on the first sentence of summary
+  const sentences = s.split(/(?<=[.!?])\s+/)
+  if (sentences.length < 2) return summary   // only one sentence — nothing to trim
+
+  const significant = (str) =>
+    str.toLowerCase().split(/\W+/).filter(w => w.length > 3)
+
+  const cWords = significant(c)
+  const firstWords = significant(sentences[0])
+
+  if (cWords.length >= 3 && firstWords.length >= 3) {
+    const overlap = cWords.filter(w => firstWords.includes(w)).length
+    const sim = overlap / Math.max(cWords.length, firstWords.length)
+    if (sim >= 0.60) {
+      return sentences.slice(1).join(' ').trim()
+    }
+  }
+
+  return summary
 }
 
 function TypeBadge({ isMedical, typeLabel }) {
@@ -372,9 +468,18 @@ function IncidentCard({ incident, onAccept, accepting, staggerIndex, claimed }) 
   const tier = urgencyTier(urgency)
   const isMedical = incident.incident_type === 'MEDICAL'
   const typeLabel = incident.incident_type || 'DISASTER'
-  const transcript = incident.transcript || ''
   const tone = structured.tone || ''
   const priority = structured.priority || incident.priority || ''
+
+  const callerName = incident.users?.name || structured.caller_name || ''
+  const contactNumber = incident.users?.contact_number || ''
+
+  // Short headline (content) — distinct from the full dispatcher summary
+  const content = deriveContent(structured)
+  // Full dispatcher summary — strip any prefix that repeats the headline
+  const rawSummary = String(structured.summary || '').trim()
+  const displaySummary = trimRedundantPrefix(content, rawSummary)
+  const showSummary = displaySummary && displaySummary !== content && displaySummary.length > 20
 
   return (
     <article
@@ -413,9 +518,32 @@ function IncidentCard({ incident, onAccept, accepting, staggerIndex, claimed }) 
           </div>
         </div>
 
-        {transcript && <p className="incident-transcript">{transcript}</p>}
+        {(callerName || contactNumber) && (
+          <div className="caller-info-row">
+            {callerName && (
+              <div className="caller-row">
+                <User className="caller-icon" aria-hidden />
+                <span className="caller-text">{callerName}</span>
+              </div>
+            )}
+            {contactNumber && (
+              <div className="caller-row">
+                <Phone className="caller-icon" aria-hidden />
+                <span className="caller-text">{contactNumber}</span>
+              </div>
+            )}
+          </div>
+        )}
 
-        <StructuredTags data={structured} />
+        {/* Short headline — what happened, in one sentence */}
+        {content && <p className="incident-content">{content}</p>}
+
+        {/* Full dispatcher summary — only when it adds information beyond the headline */}
+        {showSummary && (
+          <p className="incident-summary">{displaySummary}</p>
+        )}
+
+        <StructuredTags data={structured} incidentType={incident.incident_type} />
       </div>
 
       <footer className="incident-card-footer">

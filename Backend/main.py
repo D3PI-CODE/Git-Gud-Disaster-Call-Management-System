@@ -288,13 +288,20 @@ def _persist_incident(record: dict, user_id: Optional[str]) -> Optional[str]:
 
     structured_data: dict = dict(record.get("structured_data") or {})
     structured_data.setdefault("caller_name", record.get("caller_name") or "Unknown Caller")
-    structured_data.setdefault("content", structured_data.get("summary", ""))
+    # Only fall back to summary when content is genuinely absent (legacy records);
+    # new records set content explicitly via build_structured_data.
+    if not structured_data.get("content"):
+        # Use first sentence of summary as a concise fallback content
+        summary = structured_data.get("summary", "")
+        first_sentence = summary.split(".")[0].strip()
+        structured_data["content"] = first_sentence + "." if first_sentence else summary
 
     db_payload = {
         "user_id": user_id,
         "incident_type": db_incident_type,
         "urgency_score": float(record.get("urgency_score") or record.get("urgency") or 0),
         "transcript": record.get("transcript") or "",
+        "location": record.get("location") or structured_data.get("location") or "Unknown",
         "status": "PENDING",
         "structured_data": structured_data,
     }
@@ -527,7 +534,7 @@ async def get_incident_status(ref_id: str):
     # incidents and do the prefix match in Python (acceptable for demo-scale data).
     result = (
         supabase.table("incidents")
-        .select("id, urgency_score, incident_type, status, created_at")
+        .select("id, urgency_score, incident_type, status, created_at, structured_data")
         .order("created_at", desc=True)
         .limit(500)
         .execute()
@@ -546,12 +553,23 @@ async def get_incident_status(ref_id: str):
 
     urgency_score = row.get("urgency_score")
     incident_type = row.get("incident_type")
-    return {
-        **row,
-        "priority": urgency_to_priority(
+    structured_data = row.get("structured_data") or {}
+
+    # Prefer the priority that was computed by the full pipeline (stored in
+    # structured_data.priority). Fall back to urgency_score-only derivation
+    # for legacy rows that pre-date the structured pipeline.
+    stored_priority = structured_data.get("priority") if isinstance(structured_data, dict) else None
+    priority = (
+        stored_priority
+        if stored_priority in ("critical", "high", "medium", "low")
+        else urgency_to_priority(
             urgency_score if isinstance(urgency_score, (int, float)) else None,
             incident_type if isinstance(incident_type, str) else None,
-        ),
+        )
+    )
+    return {
+        **row,
+        "priority": priority,
     }
 
 

@@ -462,6 +462,7 @@ def serialize_incident(row):
         "agent_id": row.get("agent_id"),
         "incident_type": row.get("incident_type") or "DISASTER",
         "urgency_score": row.get("urgency_score") or 0,
+        "location": row.get("location") or structured.get("location") or "Unknown",
         "status": row.get("status") or "PENDING",
         "transcript": row.get("transcript") or "",
         "created_at": row.get("created_at"),

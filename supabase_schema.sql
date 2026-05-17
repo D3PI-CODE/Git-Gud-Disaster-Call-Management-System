@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS incidents (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS location TEXT;
+
 CREATE INDEX IF NOT EXISTS incidents_created_at_idx ON incidents (created_at DESC);
 
 -- Hot path for the claim-queue lookup ("PENDING + unassigned, by urgency")
