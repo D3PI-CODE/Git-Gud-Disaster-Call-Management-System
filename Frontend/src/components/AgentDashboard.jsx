@@ -10,6 +10,7 @@ import {
   Radio,
   LogOut,
   ChevronDown,
+  CheckCircle,
 } from 'lucide-react'
 import { supabase, attachAgentToken } from '../lib/supabaseClient'
 import {
@@ -17,11 +18,14 @@ import {
   getCurrentAgentId,
   getStoredUser,
   claimIncident,
+  resolveIncident,
   ApiError,
 } from '../lib/api'
 import './AgentDashboard.css'
 
 const AGENT_LOCATION_KEY = 'resqnet_agent_location'
+const RESOLVE_SUCCESS_MS = 350
+const RESOLVE_EXIT_MS = 520
 
 /* ─── Helpers ────────────────────────────────────────────── */
 function parseStructured(raw) {
@@ -295,7 +299,17 @@ function TypeBadge({ isMedical, typeLabel }) {
   )
 }
 
-function IncidentCard({ incident, onAccept, accepting, staggerIndex, claimed }) {
+function IncidentCard({
+  incident,
+  variant = 'queue',
+  onAccept,
+  accepting,
+  onResolve,
+  resolving,
+  resolveSuccess,
+  exiting,
+  staggerIndex,
+}) {
   const structured = parseStructured(incident.structured_data)
   const location = structured.location || 'Location unknown'
   const score = normalizeScore(incident.urgency_score)
@@ -303,10 +317,11 @@ function IncidentCard({ incident, onAccept, accepting, staggerIndex, claimed }) 
   const isMedical = incident.incident_type === 'MEDICAL'
   const typeLabel = incident.incident_type || 'DISASTER'
   const transcript = incident.transcript || ''
+  const isActive = variant === 'active'
 
   return (
     <article
-      className={`incident-card incident-card--${tier}`}
+      className={`incident-card incident-card--${tier}${resolveSuccess ? ' incident-card--resolve-success' : ''}${exiting ? ' incident-card--exit' : ''}`}
       style={{ animationDelay: `${Math.min(staggerIndex, 12) * 0.06}s` }}
     >
       <header className="incident-card-header">
@@ -337,9 +352,26 @@ function IncidentCard({ incident, onAccept, accepting, staggerIndex, claimed }) 
       </div>
 
       <footer className="incident-card-footer">
-        {claimed ? (
-          <button type="button" className="btn-claimed" disabled>
-            Case Claimed
+        {isActive ? (
+          <button
+            type="button"
+            className={`btn-resolve${resolveSuccess ? ' btn-resolve--success' : ''}`}
+            disabled={resolving || resolveSuccess || exiting}
+            onClick={() => onResolve?.(incident)}
+          >
+            {resolveSuccess ? (
+              <>
+                <CheckCircle className="btn-resolve-icon" aria-hidden />
+                Case Resolved
+              </>
+            ) : resolving ? (
+              <>
+                <Loader2 className="btn-resolve-icon btn-resolve-icon--spin" aria-hidden />
+                Resolving…
+              </>
+            ) : (
+              'Resolve Case'
+            )}
           </button>
         ) : (
           <button
@@ -371,6 +403,9 @@ export default function AgentDashboard({ onSignOut }) {
   const [myActiveIncidents, setMyActiveIncidents] = useState([])
   const [activePanel, setActivePanel] = useState('queue')
   const [acceptingId, setAcceptingId] = useState(null)
+  const [resolvingId, setResolvingId] = useState(null)
+  const [resolveFlashIds, setResolveFlashIds] = useState(() => new Set())
+  const [exitingIds, setExitingIds] = useState(() => new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [liveStatus, setLiveStatus] = useState('connecting')
@@ -462,6 +497,11 @@ export default function AgentDashboard({ onSignOut }) {
         } else {
           setMyActiveIncidents(prev => prev.filter(i => i.id !== row.id))
         }
+        return
+      }
+
+      if (row.status === 'RESOLVED') {
+        removeFromBoth(row.id)
         return
       }
 
@@ -662,6 +702,117 @@ export default function AgentDashboard({ onSignOut }) {
     }
   }
 
+  async function handleResolve(incident) {
+    const loggedInAgentId = getCurrentAgentId()
+    if (!loggedInAgentId) {
+      setError('Session expired — please sign in again.')
+      return
+    }
+
+    setResolvingId(incident.id)
+    setError(null)
+
+    // #region agent log
+    fetch('http://127.0.0.1:7501/ingest/c12efe83-6414-4913-b137-e3a0c8e0b6e5', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Debug-Session-Id': 'c791f6',
+      },
+      body: JSON.stringify({
+        sessionId: 'c791f6',
+        hypothesisId: 'H1-H4',
+        location: 'AgentDashboard.jsx:handleResolve:pre_api',
+        message: 'resolve_api_start',
+        data: {
+          incidentId: incident.id,
+          hasAgentId: Boolean(loggedInAgentId),
+          storedAgentId: loggedInAgentId,
+          cardStatus: incident.status ?? null,
+          cardAgentId: incident.agent_id ?? null,
+          supabaseUrl: import.meta.env.VITE_SUPABASE_URL?.slice(-24) ?? null,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
+
+    try {
+      const result = await resolveIncident(incident.id)
+      // #region agent log
+      fetch('http://127.0.0.1:7501/ingest/c12efe83-6414-4913-b137-e3a0c8e0b6e5', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': 'c791f6',
+        },
+        body: JSON.stringify({
+          sessionId: 'c791f6',
+          hypothesisId: 'H1',
+          location: 'AgentDashboard.jsx:handleResolve:post_api',
+          message: 'resolve_api_ok',
+          data: {
+            incidentId: incident.id,
+            status: result?.incident?.status ?? null,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
+    } catch (apiErr) {
+      const reason =
+        apiErr instanceof ApiError && apiErr.detail?.reason
+          ? apiErr.detail.reason
+          : null
+      // #region agent log
+      fetch('http://127.0.0.1:7501/ingest/c12efe83-6414-4913-b137-e3a0c8e0b6e5', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': 'c791f6',
+        },
+        body: JSON.stringify({
+          sessionId: 'c791f6',
+          hypothesisId: 'H1-H5',
+          location: 'AgentDashboard.jsx:handleResolve:post_api',
+          message: 'resolve_api_error',
+          data: {
+            incidentId: incident.id,
+            status: apiErr instanceof ApiError ? apiErr.status : null,
+            reason,
+            errorMessage: apiErr.message?.slice(0, 200) ?? null,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
+      setError(apiErr.message)
+      setResolvingId(null)
+      return
+    }
+
+    setResolvingId(null)
+    setResolveFlashIds(prev => new Set(prev).add(incident.id))
+
+    window.setTimeout(() => {
+      setResolveFlashIds(prev => {
+        const next = new Set(prev)
+        next.delete(incident.id)
+        return next
+      })
+      setExitingIds(prev => new Set(prev).add(incident.id))
+
+      window.setTimeout(() => {
+        setMyActiveIncidents(prev => prev.filter(i => i.id !== incident.id))
+        setExitingIds(prev => {
+          const next = new Set(prev)
+          next.delete(incident.id)
+          return next
+        })
+      }, RESOLVE_EXIT_MS)
+    }, RESOLVE_SUCCESS_MS)
+  }
+
   return (
     <div className="dashboard-container">
       <header className="dashboard-header">
@@ -758,6 +909,7 @@ export default function AgentDashboard({ onSignOut }) {
                     <IncidentCard
                       key={incident.id}
                       incident={incident}
+                      variant="queue"
                       onAccept={handleAccept}
                       accepting={acceptingId === incident.id}
                       staggerIndex={index}
@@ -787,7 +939,11 @@ export default function AgentDashboard({ onSignOut }) {
                     <IncidentCard
                       key={incident.id}
                       incident={incident}
-                      claimed
+                      variant="active"
+                      onResolve={handleResolve}
+                      resolving={resolvingId === incident.id}
+                      resolveSuccess={resolveFlashIds.has(incident.id)}
+                      exiting={exitingIds.has(incident.id)}
                       staggerIndex={index}
                     />
                   ))}

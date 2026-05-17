@@ -22,11 +22,13 @@ from pipeline import process_incident_audio
 from priority import urgency_to_priority
 from supabase_client import (
     ClaimError,
+    ResolveError,
     insert_incident,
     fetch_incidents,
     fetch_agent_incidents,
     fetch_incident_by_id,
     claim_incident,
+    resolve_incident,
     serialize_incident,
     supabase,
 )
@@ -442,6 +444,12 @@ _CLAIM_ERROR_HTTP_STATUS = {
     "AGENT_NOT_REGISTERED": 403,
 }
 
+_RESOLVE_ERROR_HTTP_STATUS = {
+    "NOT_OWNED_OR_NOT_ACTIVE": 409,
+    "INCIDENT_NOT_FOUND": 404,
+    "AGENT_NOT_REGISTERED": 403,
+}
+
 
 @app.post("/api/incidents/{incident_id}/claim")
 def claim_incident_endpoint(
@@ -491,6 +499,30 @@ def claim_incident_endpoint(
     # Re-fetch through fetch_incident_by_id so the response includes the
     # joined `users(name, contact_number)` block and the normalized shape
     # the dashboard expects.
+    enriched = fetch_incident_by_id(row.get("id")) or row
+    return {
+        "status": "success",
+        "incident": serialize_incident(enriched),
+    }
+
+
+@app.post("/api/incidents/{incident_id}/resolve")
+def resolve_incident_endpoint(
+    incident_id: str,
+    agent: CurrentAgent = Depends(get_current_agent),
+):
+    """Mark an IN_PROGRESS case owned by the caller as RESOLVED."""
+    try:
+        row = resolve_incident(incident_id=incident_id, agent_id=agent.agent_id)
+    except ResolveError as e:
+        status_code = _RESOLVE_ERROR_HTTP_STATUS.get(e.reason, 500)
+        raise HTTPException(
+            status_code=status_code,
+            detail={"reason": e.reason, "message": e.message},
+        ) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
     enriched = fetch_incident_by_id(row.get("id")) or row
     return {
         "status": "success",
