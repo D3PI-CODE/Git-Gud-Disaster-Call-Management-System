@@ -14,3 +14,4 @@ MAX_VOICE_DURATION_SEC: int = int(os.getenv("MAX_VOICE_DURATION_SEC", "60"))
 
 INCIDENT_ENDPOINT = f"{API_URL}/incident"
 STATUS_ENDPOINT = f"{API_URL}/incident/status"
+TRIAGE_WEBHOOK_SECRET: str = os.getenv("TRIAGE_WEBHOOK_SECRET", "").strip()

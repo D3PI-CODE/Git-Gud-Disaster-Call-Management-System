@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any, Optional
 
@@ -313,11 +314,19 @@ async def create_incident(
     audio: UploadFile = File(...),
     caller_name: str = Form("Unknown"),
     location: str = Form("Unknown"),
-    _agent: CurrentAgent = Depends(get_current_agent),
     contact_number: str = Form(""),
     telegram_id: str = Form(""),
     incident_type: str = Form("disaster"),
+    x_webhook_secret: Optional[str] = Header(default=None, alias="X-Webhook-Secret"),
+    authorization: Optional[str] = Header(default=None),
 ):
+    """Telegram / external ingest: VALSEA -> Gemini -> Supabase.
+
+    Auth matches /api/triage: X-Webhook-Secret when TRIAGE_WEBHOOK_SECRET is set,
+    else open mode for local dev (Telegram bot posts without a Bearer token).
+    Agents may also call with Authorization: Bearer <jwt>.
+    """
+    _authorize_triage(x_webhook_secret, authorization)
     try:
         audio_bytes = await audio.read()
         if not audio_bytes:

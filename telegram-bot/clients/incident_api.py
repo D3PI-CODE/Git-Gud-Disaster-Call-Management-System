@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import aiohttp
 
-from config import INCIDENT_ENDPOINT, REQUEST_TIMEOUT_SECONDS, STATUS_ENDPOINT
+from config import (
+    INCIDENT_ENDPOINT,
+    REQUEST_TIMEOUT_SECONDS,
+    STATUS_ENDPOINT,
+    TRIAGE_WEBHOOK_SECRET,
+)
 
 
 class BackendError(Exception):
@@ -38,9 +43,14 @@ async def submit_incident(
         form.add_field("telegram_id", telegram_id)
         form.add_field("incident_type", incident_type)
 
+        headers = {}
+        if TRIAGE_WEBHOOK_SECRET:
+            headers["X-Webhook-Secret"] = TRIAGE_WEBHOOK_SECRET
+
         async with session.post(
             INCIDENT_ENDPOINT,
             data=form,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS),
         ) as resp:
             body = await resp.json(content_type=None)
