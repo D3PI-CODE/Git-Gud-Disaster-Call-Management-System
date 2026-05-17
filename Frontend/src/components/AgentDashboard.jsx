@@ -40,6 +40,77 @@ function normalizeScore(s) {
   return n > 0 && n <= 1 ? Math.round(n * 100) : Math.round(Math.min(100, n))
 }
 
+// Maps label strings → approximate 0-1 urgency score
+const PRIORITY_URGENCY = { critical: 0.92, high: 0.70, medium: 0.45, low: 0.18 }
+const STRESS_LEVEL_URGENCY = { critical: 0.92, high: 0.72, moderate: 0.50, low: 0.20 }
+const TONE_URGENCY = {
+  panicked: 0.95, frantic: 0.93, screaming: 0.90, fearful: 0.86,
+  distressed: 0.78, urgent: 0.74, anxious: 0.68, upset: 0.64,
+  worried: 0.55, concerned: 0.50, frustrated: 0.52, confused: 0.42,
+  neutral: 0.25, calm: 0.18, polite: 0.15,
+}
+
+/**
+ * Derive the best available urgency score (0–1) from all signals in the
+ * incident row.  Falls through from most-authoritative to least:
+ *   1. urgency_score DB column (set by the full pipeline)
+ *   2. structured_data.urgency  (stored since the latest backend fix)
+ *   3. Raw VALSEA stress/urgency in the nested valsea object
+ *   4. structured_data stress/frustration numeric fields
+ *   5. priority label  →  mapped score
+ *   6. stress_level label  →  mapped score
+ *   7. tone label  →  mapped score
+ *   8. sentiment  →  mapped score
+ */
+function deriveUrgency(incident) {
+  // 1. Top-level urgency_score
+  const direct = Number(incident.urgency_score)
+  if (direct > 0 && direct <= 1) return direct
+  if (direct > 1) return direct / 100   // guard: someone stored as 0-100
+
+  const sd = parseStructured(incident.structured_data)
+
+  // 2. Explicit urgency saved in structured_data (new pipeline records)
+  const sdUrgency = Number(sd.urgency)
+  if (sdUrgency > 0) return sdUrgency > 1 ? sdUrgency / 10 : sdUrgency
+
+  // 3. VALSEA sub-dict (auto-detect 0-10 vs 0-1 scale)
+  const v = sd.valsea || {}
+  const rawVU = Number(v.urgency || 0)
+  const rawVS = Number(v.stress || 0)
+  const scale = (rawVU > 1 || rawVS > 1) ? 10 : 1
+  const valseaScore = Math.max(rawVU / scale, rawVS / scale * 0.9)
+  if (valseaScore > 0.05) return Math.min(valseaScore, 0.98)
+
+  // 4. Normalised stress + frustration stored at structured_data root
+  const stress = Number(sd.stress || 0)
+  const frustration = Number(sd.frustration || 0)
+  const stressNorm = stress > 1 ? stress / 10 : stress
+  const frustNorm = frustration > 1 ? frustration / 10 : frustration
+  const metricScore = Math.max(stressNorm, frustNorm * 0.8)
+  if (metricScore > 0.05) return Math.min(metricScore, 0.98)
+
+  // 5. priority label
+  const priority = String(sd.priority || incident.priority || '').toLowerCase()
+  if (PRIORITY_URGENCY[priority]) return PRIORITY_URGENCY[priority]
+
+  // 6. stress_level label
+  const sl = String(sd.stress_level || '').toLowerCase()
+  if (STRESS_LEVEL_URGENCY[sl]) return STRESS_LEVEL_URGENCY[sl]
+
+  // 7. tone label (fuzzy match)
+  const tone = String(sd.tone || '').toLowerCase()
+  for (const [keyword, score] of Object.entries(TONE_URGENCY)) {
+    if (tone.includes(keyword)) return score
+  }
+
+  // 8. sentiment
+  if (sd.sentiment === 'negative') return 0.38
+  if (sd.sentiment === 'positive') return 0.12
+
+  return 0.20  // unknown — show a non-zero baseline
+}
+
 function urgencyTier(score) {
   const n = normalizeScore(score)
   if (n > 80) return 'critical'
@@ -49,9 +120,7 @@ function urgencyTier(score) {
 }
 
 function sortByUrgency(list) {
-  return [...list].sort(
-    (a, b) => (Number(b.urgency_score) || 0) - (Number(a.urgency_score) || 0),
-  )
+  return [...list].sort((a, b) => deriveUrgency(b) - deriveUrgency(a))
 }
 
 function timeAgo(str) {
@@ -226,7 +295,7 @@ function StatsOverviewBar({ incidents }) {
     i => i.incident_type === 'DISASTER' || !i.incident_type,
   ).length
   const critical = incidents.filter(
-    i => urgencyTier(i.urgency_score) === 'critical',
+    i => urgencyTier(deriveUrgency(i)) === 'critical',
   ).length
 
   const items = [
@@ -298,11 +367,14 @@ function TypeBadge({ isMedical, typeLabel }) {
 function IncidentCard({ incident, onAccept, accepting, staggerIndex, claimed }) {
   const structured = parseStructured(incident.structured_data)
   const location = structured.location || 'Location unknown'
-  const score = normalizeScore(incident.urgency_score)
-  const tier = urgencyTier(incident.urgency_score)
+  const urgency = deriveUrgency(incident)
+  const score = normalizeScore(urgency)
+  const tier = urgencyTier(urgency)
   const isMedical = incident.incident_type === 'MEDICAL'
   const typeLabel = incident.incident_type || 'DISASTER'
   const transcript = incident.transcript || ''
+  const tone = structured.tone || ''
+  const priority = structured.priority || incident.priority || ''
 
   return (
     <article
@@ -317,6 +389,16 @@ function IncidentCard({ incident, onAccept, accepting, staggerIndex, claimed }) 
             <p className="urgency-score">{score}</p>
           </div>
         </div>
+        {(tone || priority) && (
+          <div className="incident-card-meta-row">
+            {tone && <span className="meta-pill meta-pill--tone">{tone}</span>}
+            {priority && (
+              <span className={`meta-pill meta-pill--priority meta-pill--${priority.toLowerCase()}`}>
+                {priority}
+              </span>
+            )}
+          </div>
+        )}
       </header>
 
       <div className="incident-card-body">

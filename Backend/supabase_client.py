@@ -444,6 +444,18 @@ def serialize_incident(row):
     urgency_score = row.get("urgency_score")
     incident_type = row.get("incident_type")
 
+    # Prefer the priority stored by the full pipeline over re-deriving from
+    # urgency_score alone (which ignores stress and the LLM's triage judgment).
+    stored_priority = structured.get("priority")
+    priority = (
+        stored_priority
+        if stored_priority in ("critical", "high", "medium", "low")
+        else urgency_to_priority(
+            urgency_score if isinstance(urgency_score, (int, float)) else None,
+            incident_type if isinstance(incident_type, str) else None,
+        )
+    )
+
     return {
         "id": row.get("id"),
         "user_id": row.get("user_id"),
@@ -455,8 +467,5 @@ def serialize_incident(row):
         "created_at": row.get("created_at"),
         "structured_data": structured,
         "users": users,
-        "priority": urgency_to_priority(
-            urgency_score if isinstance(urgency_score, (int, float)) else None,
-            incident_type if isinstance(incident_type, str) else None,
-        ),
+        "priority": priority,
     }
