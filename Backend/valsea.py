@@ -251,7 +251,13 @@ def process_audio(
     source_for_clarify = pre_clarified or result.raw_transcript
     result.clarified_transcript = denoise_transcript(source_for_clarify, lang)
     emotions = prosody.get("emotions") or {}
-    result.emotions = {k: float(v) for k, v in emotions.items()}
+    raw_emotions = {k: float(v) for k, v in emotions.items()}
+    # VALSEA prosody returns emotions on a 0–10 integer scale; normalize to 0.0–1.0
+    # so all downstream thresholds and LLM prompts operate on a consistent scale.
+    if raw_emotions and max(raw_emotions.values()) > 1.0:
+        result.emotions = {k: round(v / 10.0, 3) for k, v in raw_emotions.items()}
+    else:
+        result.emotions = raw_emotions
     result.stress = result.emotions.get("stress", 0.0)
     result.urgency = result.emotions.get("urgency", 0.0)
     result.frustration = result.emotions.get("frustration", 0.0)

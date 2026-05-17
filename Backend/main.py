@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import Any, Optional
 
 from fastapi import (
@@ -38,6 +39,24 @@ from auth_guard import CurrentAgent, get_current_agent, resolve_agent_from_heade
 from valsea import ValseaError, transcribe_audio
 
 logger = logging.getLogger(__name__)
+
+_COMMON_SENTENCE_ABBREVIATIONS = {
+    "mr.",
+    "mrs.",
+    "ms.",
+    "dr.",
+    "prof.",
+    "sr.",
+    "jr.",
+    "st.",
+    "mt.",
+    "vs.",
+    "etc.",
+    "e.g.",
+    "i.e.",
+    "a.m.",
+    "p.m.",
+}
 
 app = FastAPI(title="Disaster Call Management System API")
 
@@ -280,6 +299,23 @@ def _get_default_user_id() -> Optional[str]:
     return None
 
 
+def _extract_headline_text(text: Any) -> str:
+    """Return a short headline when a safe sentence boundary exists."""
+    summary = str(text or "").strip()
+    if not summary:
+        return ""
+
+    parts = re.split(r"(?<=[.!?])\s+", summary)
+    if len(parts) < 2:
+        return summary
+
+    first_sentence = parts[0].strip()
+    last_token = first_sentence.lower().split()[-1] if first_sentence.split() else ""
+    if last_token in _COMMON_SENTENCE_ABBREVIATIONS or re.search(r"\b[A-Za-z]\.$", first_sentence):
+        return summary
+    return first_sentence
+
+
 def _persist_incident(record: dict, user_id: Optional[str]) -> Optional[str]:
     """Insert the processed incident into Supabase and return the DB-generated UUID."""
     if not supabase:
@@ -290,13 +326,18 @@ def _persist_incident(record: dict, user_id: Optional[str]) -> Optional[str]:
 
     structured_data: dict = dict(record.get("structured_data") or {})
     structured_data.setdefault("caller_name", record.get("caller_name") or "Unknown Caller")
-    structured_data.setdefault("content", structured_data.get("summary", ""))
+    # Only fall back to summary when content is genuinely absent (legacy records);
+    # new records set content explicitly via build_structured_data.
+    if not structured_data.get("content"):
+        summary = structured_data.get("summary", "")
+        structured_data["content"] = _extract_headline_text(summary)
 
     db_payload = {
         "user_id": user_id,
         "incident_type": db_incident_type,
         "urgency_score": float(record.get("urgency_score") or record.get("urgency") or 0),
         "transcript": record.get("transcript") or "",
+        "location": record.get("location") or structured_data.get("location") or "Unknown",
         "status": "PENDING",
         "structured_data": structured_data,
     }
@@ -559,7 +600,7 @@ async def get_incident_status(ref_id: str):
     # incidents and do the prefix match in Python (acceptable for demo-scale data).
     result = (
         supabase.table("incidents")
-        .select("id, urgency_score, incident_type, status, created_at")
+        .select("id, urgency_score, incident_type, status, created_at, structured_data")
         .order("created_at", desc=True)
         .limit(500)
         .execute()
@@ -578,12 +619,23 @@ async def get_incident_status(ref_id: str):
 
     urgency_score = row.get("urgency_score")
     incident_type = row.get("incident_type")
-    return {
-        **row,
-        "priority": urgency_to_priority(
+    structured_data = row.get("structured_data") or {}
+
+    # Prefer the priority that was computed by the full pipeline (stored in
+    # structured_data.priority). Fall back to urgency_score-only derivation
+    # for legacy rows that pre-date the structured pipeline.
+    stored_priority = structured_data.get("priority") if isinstance(structured_data, dict) else None
+    priority = (
+        stored_priority
+        if stored_priority in ("critical", "high", "medium", "low")
+        else urgency_to_priority(
             urgency_score if isinstance(urgency_score, (int, float)) else None,
             incident_type if isinstance(incident_type, str) else None,
-        ),
+        )
+    )
+    return {
+        **{key: value for key, value in row.items() if key != "structured_data"},
+        "priority": priority,
     }
 
 

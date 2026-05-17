@@ -3,6 +3,7 @@ import {
   MapPin,
   Loader2,
   User,
+  Phone,
   Activity,
   ShieldAlert,
   Flame,
@@ -44,6 +45,107 @@ function normalizeScore(s) {
   return n > 0 && n <= 1 ? Math.round(n * 100) : Math.round(Math.min(100, n))
 }
 
+// Maps label strings → approximate 0-1 urgency score
+const PRIORITY_URGENCY = { critical: 0.92, high: 0.70, medium: 0.45, low: 0.18 }
+const STRESS_LEVEL_URGENCY = { critical: 0.92, high: 0.72, moderate: 0.50, low: 0.20 }
+const TONE_URGENCY = {
+  panicked: 0.95, frantic: 0.93, screaming: 0.90, fearful: 0.86,
+  distressed: 0.78, urgent: 0.74, anxious: 0.68, upset: 0.64,
+  worried: 0.55, concerned: 0.50, frustrated: 0.52, confused: 0.42,
+  neutral: 0.25, calm: 0.18, polite: 0.15,
+}
+const COMMON_SENTENCE_ABBREVIATIONS = new Set([
+  'mr.', 'mrs.', 'ms.', 'dr.', 'prof.', 'sr.', 'jr.', 'st.', 'mt.',
+  'vs.', 'etc.', 'e.g.', 'i.e.', 'a.m.', 'p.m.',
+])
+
+function normalizeFractionLike(value) {
+  const num = Number(value)
+  if (Number.isNaN(num) || num <= 0) return 0
+  if (num <= 1) return num
+  if (num <= 10) return num / 10
+  return Math.min(num / 100, 1)
+}
+
+function extractHeadlineText(text) {
+  const summary = String(text || '').trim()
+  if (!summary) return ''
+
+  const parts = summary.split(/(?<=[.!?])\s+/)
+  if (parts.length < 2) return summary
+
+  const firstSentence = parts[0].trim()
+  const words = firstSentence.split(/\s+/)
+  const lastToken = words.at(-1)?.toLowerCase() || ''
+  if (COMMON_SENTENCE_ABBREVIATIONS.has(lastToken) || /\b[A-Za-z]\.$/.test(firstSentence)) {
+    return summary
+  }
+
+  return firstSentence
+}
+
+/**
+ * Derive the best available urgency score (0–1) from all signals in the
+ * incident row.  Falls through from most-authoritative to least:
+ *   1. urgency_score DB column (set by the full pipeline)
+ *   2. structured_data.urgency  (stored since the latest backend fix)
+ *   3. Raw VALSEA stress/urgency in the nested valsea object
+ *   4. structured_data stress/frustration numeric fields
+ *   5. priority label  →  mapped score
+ *   6. stress_level label  →  mapped score
+ *   7. tone label  →  mapped score
+ *   8. sentiment  →  mapped score
+ */
+function deriveUrgency(incident) {
+  // 1. Top-level urgency_score
+  const direct = Number(incident.urgency_score)
+  if (direct > 0 && direct <= 1) return direct
+  if (direct > 1 && direct <= 10) return direct / 10
+  if (direct > 10) return direct / 100   // guard: someone stored as 0-100
+
+  const sd = parseStructured(incident.structured_data)
+
+  // 2. Explicit urgency saved in structured_data (new pipeline records)
+  const sdUrgency = Number(sd.urgency)
+  if (sdUrgency > 0) return sdUrgency > 1 ? sdUrgency / 10 : sdUrgency
+
+  // 3. VALSEA sub-dict (auto-detect 0-10 vs 0-1 scale)
+  const v = sd.valsea || {}
+  const rawVU = Number(v.urgency || 0)
+  const rawVS = Number(v.stress || 0)
+  const scale = (rawVU > 1 || rawVS > 1) ? 10 : 1
+  const valseaScore = Math.max(rawVU / scale, rawVS / scale * 0.9)
+  if (valseaScore > 0.05) return Math.min(valseaScore, 0.98)
+
+  // 4. Normalised stress + frustration stored at structured_data root
+  const stress = Number(sd.stress || 0)
+  const frustration = Number(sd.frustration || 0)
+  const stressNorm = stress > 1 ? stress / 10 : stress
+  const frustNorm = frustration > 1 ? frustration / 10 : frustration
+  const metricScore = Math.max(stressNorm, frustNorm * 0.8)
+  if (metricScore > 0.05) return Math.min(metricScore, 0.98)
+
+  // 5. priority label
+  const priority = String(sd.priority || incident.priority || '').toLowerCase()
+  if (PRIORITY_URGENCY[priority]) return PRIORITY_URGENCY[priority]
+
+  // 6. stress_level label
+  const sl = String(sd.stress_level || '').toLowerCase()
+  if (STRESS_LEVEL_URGENCY[sl]) return STRESS_LEVEL_URGENCY[sl]
+
+  // 7. tone label (fuzzy match)
+  const tone = String(sd.tone || '').toLowerCase()
+  for (const [keyword, score] of Object.entries(TONE_URGENCY)) {
+    if (tone.includes(keyword)) return score
+  }
+
+  // 8. sentiment
+  if (sd.sentiment === 'negative') return 0.38
+  if (sd.sentiment === 'positive') return 0.12
+
+  return 0.20  // unknown — show a non-zero baseline
+}
+
 function urgencyTier(score) {
   const n = normalizeScore(score)
   if (n > 80) return 'critical'
@@ -53,9 +155,7 @@ function urgencyTier(score) {
 }
 
 function sortByUrgency(list) {
-  return [...list].sort(
-    (a, b) => (Number(b.urgency_score) || 0) - (Number(a.urgency_score) || 0),
-  )
+  return [...list].sort((a, b) => deriveUrgency(b) - deriveUrgency(a))
 }
 
 function timeAgo(str) {
@@ -230,7 +330,7 @@ function StatsOverviewBar({ incidents }) {
     i => i.incident_type === 'DISASTER' || !i.incident_type,
   ).length
   const critical = incidents.filter(
-    i => urgencyTier(i.urgency_score) === 'critical',
+    i => urgencyTier(deriveUrgency(i)) === 'critical',
   ).length
 
   const items = [
@@ -256,25 +356,123 @@ function StatsOverviewBar({ incidents }) {
   )
 }
 
-function StructuredTags({ data }) {
-  const skip = new Set(['location', 'action_items'])
-  const entries = Object.entries(data).filter(
-    ([k, v]) => !skip.has(k) && v != null && String(v).trim() !== '',
-  )
+// Fields handled by dedicated card sections or not fit for tag display
+const STRUCTURED_TAG_SKIP = new Set([
+  'location', 'action_items', 'valsea', 'summary', 'content',
+  'main_points', 'priority', 'tone', 'urgency', 'source',
+  'caller_name', 'transcript',
+])
 
-  if (entries.length === 0) return null
+// Only show these specific keys as metadata tags (allowlist approach)
+const STRUCTURED_TAG_ALLOW = new Set([
+  'stress_level', 'sentiment', 'language', 'stress', 'frustration',
+  'incident_type',
+])
+
+// Tags that are numeric (0–1 scale) → displayed as a percentage
+const NUMERIC_TAG_KEYS = new Set(['stress', 'frustration'])
+
+function StructuredTags({ data, incidentType }) {
+  const entries = Object.entries(data).filter(([k, v]) => {
+    if (!STRUCTURED_TAG_ALLOW.has(k)) return false
+    if (v == null || String(v).trim() === '' || String(v) === '0') return false
+    // Skip near-zero numerics (not meaningful to display)
+    if (typeof v === 'number' && v < 0.05) return false
+    // incident_type comes from the incident row, skip if passed separately
+    if (k === 'incident_type') return false
+    return true
+  })
+
+  // Add incident_type from the prop if available
+  const extra = incidentType ? [['type', incidentType]] : []
+  const allEntries = [...extra, ...entries]
+
+  if (allEntries.length === 0) return null
 
   return (
     <div className="tag-container">
-      {entries.map(([key, val]) => (
-        <span key={key} className="tag-pill">
-          <span className="tag-pill-key">{key.replace(/_/g, ' ')}</span>
-          <span className="tag-pill-sep">·</span>
-          <span>{String(val).slice(0, 48)}</span>
-        </span>
-      ))}
+      {allEntries.map(([key, val]) => {
+        const display = NUMERIC_TAG_KEYS.has(key)
+          ? `${Math.round(normalizeFractionLike(val) * 100)}%`
+          : String(val)
+        return (
+          <span key={key} className={`tag-pill tag-pill--${key.replace(/_/g, '-')}`}>
+            <span className="tag-pill-key">{key.replace(/_/g, ' ')}</span>
+            <span className="tag-pill-sep">·</span>
+            <span>{display}</span>
+          </span>
+        )
+      })}
     </div>
   )
+}
+
+/**
+ * Return a short description for the card headline.
+ * - New records: structured_data.content is a distinct 1-sentence summary.
+ * - Old records: content === summary (backend set them equal); extract only
+ *   the first sentence so they don't look identical on the card.
+ */
+function deriveContent(structured, transcript = '') {
+  const content = String(structured.content || '').trim()
+  const summary = String(structured.summary || '').trim()
+
+  if (!content) return extractHeadlineText(summary) || transcript
+
+  // If backend stored content = summary (pre-fix data), extract first sentence
+  if (content === summary) {
+    return extractHeadlineText(content)
+  }
+
+  return content
+}
+
+/**
+ * Strip the portion of `summary` that duplicates `content`.
+ *
+ * Two strategies:
+ *  1. Exact prefix: summary starts with the content text (case-insensitive).
+ *  2. Word-overlap: the first sentence of summary shares ≥60% of significant
+ *     words with content — common for old records where the LLM reused the
+ *     same opening phrase.
+ *
+ * Returns the remainder after the overlapping prefix is removed, or the
+ * original summary if no meaningful overlap is found.
+ */
+function trimRedundantPrefix(content, summary) {
+  if (!summary || !content) return summary
+
+  const c = content.trim()
+  const s = summary.trim()
+
+  // 1. Exact prefix match (case-insensitive)
+  const nextChar = s.charAt(c.length)
+  if (
+    s.toLowerCase().startsWith(c.toLowerCase()) &&
+    (!nextChar || /[\s.,!?;:)\]-]/.test(nextChar))
+  ) {
+    return s.slice(c.length).replace(/^[\s.,]+/, '').trim()
+  }
+
+  // 2. Word-overlap on the first sentence of summary
+  const sentences = s.split(/(?<=[.!?])\s+/)
+  if (sentences.length < 2) return summary   // only one sentence — nothing to trim
+
+  const significant = (str) =>
+    str.toLowerCase().split(/\W+/).filter(w => w.length > 3)
+
+  const cWords = significant(c)
+  const firstWords = significant(sentences[0])
+
+  if (cWords.length >= 3 && firstWords.length >= 3) {
+    const overlap = cWords.filter(w => firstWords.includes(w)).length
+    const sim = overlap / Math.max(cWords.length, firstWords.length)
+    if (sim >= 0.60) {
+      return sentences.slice(1).join(' ').trim()
+    }
+  }
+
+  return summary
 }
 
 function TypeBadge({ isMedical, typeLabel }) {
@@ -312,11 +510,24 @@ function IncidentCard({
 }) {
   const structured = parseStructured(incident.structured_data)
   const location = structured.location || 'Location unknown'
-  const score = normalizeScore(incident.urgency_score)
-  const tier = urgencyTier(incident.urgency_score)
+  const urgency = deriveUrgency(incident)
+  const score = normalizeScore(urgency)
+  const tier = urgencyTier(urgency)
   const isMedical = incident.incident_type === 'MEDICAL'
   const typeLabel = incident.incident_type || 'DISASTER'
-  const transcript = incident.transcript || ''
+  const tone = structured.tone || ''
+  const priority = structured.priority || incident.priority || ''
+
+  const callerName = incident.users?.name || structured.caller_name || ''
+  const contactNumber = incident.users?.contact_number || ''
+  const transcript = String(incident.transcript || '').trim()
+
+  // Short headline (content) — distinct from the full dispatcher summary
+  const content = deriveContent(structured, transcript)
+  // Full dispatcher summary — strip any prefix that repeats the headline
+  const rawSummary = String(structured.summary || '').trim()
+  const displaySummary = trimRedundantPrefix(content, rawSummary)
+  const showSummary = displaySummary && displaySummary !== content
   const isActive = variant === 'active'
 
   return (
@@ -332,6 +543,16 @@ function IncidentCard({
             <p className="urgency-score">{score}</p>
           </div>
         </div>
+        {(tone || priority) && (
+          <div className="incident-card-meta-row">
+            {tone && <span className="meta-pill meta-pill--tone">{tone}</span>}
+            {priority && (
+              <span className={`meta-pill meta-pill--priority meta-pill--${priority.toLowerCase()}`}>
+                {priority}
+              </span>
+            )}
+          </div>
+        )}
       </header>
 
       <div className="incident-card-body">
@@ -346,9 +567,32 @@ function IncidentCard({
           </div>
         </div>
 
-        {transcript && <p className="incident-transcript">{transcript}</p>}
+        {(callerName || contactNumber) && (
+          <div className="caller-info-row">
+            {callerName && (
+              <div className="caller-row">
+                <User className="caller-icon" aria-hidden />
+                <span className="caller-text">{callerName}</span>
+              </div>
+            )}
+            {contactNumber && (
+              <div className="caller-row">
+                <Phone className="caller-icon" aria-hidden />
+                <span className="caller-text">{contactNumber}</span>
+              </div>
+            )}
+          </div>
+        )}
 
-        <StructuredTags data={structured} />
+        {/* Short headline — what happened, in one sentence */}
+        {content && <p className="incident-content">{content}</p>}
+
+        {/* Full dispatcher summary — only when it adds information beyond the headline */}
+        {showSummary && (
+          <p className="incident-summary">{displaySummary}</p>
+        )}
+
+        <StructuredTags data={structured} incidentType={incident.incident_type} />
       </div>
 
       <footer className="incident-card-footer">

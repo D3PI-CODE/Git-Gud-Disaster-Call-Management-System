@@ -90,14 +90,14 @@ Context from the reporting channel:
 - Incident type selected: {incident_type}
 - Location hint from form (if any): {location_hint or "not provided"}
 
-VALSEA voice metrics (0.0–1.0 scales):
-- Stress: {valsea.get("stress", 0)}
-- Urgency: {valsea.get("urgency", 0)}
-- Frustration: {valsea.get("frustration", 0)}
-- Politeness: {valsea.get("politeness", 0)}
-- Hesitation: {valsea.get("hesitation", 0)}
+VALSEA voice metrics (all on 0.0–1.0 scale — already normalised):
+- Stress:      {valsea.get("stress", 0):.3f}  (vocal stress / physical tension in voice)
+- Urgency:     {valsea.get("urgency", 0):.3f}  (perceived urgency in speech prosody)
+- Frustration: {valsea.get("frustration", 0):.3f}
+- Politeness:  {valsea.get("politeness", 0):.3f}
+- Hesitation:  {valsea.get("hesitation", 0):.3f}
 - Inferred voice tone: {valsea.get("voice_tone", "neutral")}
-- Text sentiment: {valsea.get("sentiment", "neutral")} (confidence {valsea.get("sentiment_confidence", 0)})
+- Text sentiment: {valsea.get("sentiment", "neutral")} (confidence {valsea.get("sentiment_confidence", 0):.2f})
 
 VALSEA clarified transcript:
 \"\"\"{clarified}\"\"\"
@@ -106,20 +106,25 @@ Return ONLY a raw JSON object with exactly these keys:
 - "caller_name": string — name stated by the caller; use submitted hint only if transcript confirms or is silent
 - "location": string — place/area mentioned (city, district, landmark); "unknown" if not stated
 - "main_points": array of strings — 3–6 bullet points summarizing the emergency
-- "summary": string — one paragraph incident summary for dispatchers
-- "stress_level": string — one of "low", "moderate", "high", "critical" derived from VALSEA stress/urgency scores
-- "tone": string — caller emotional tone (use VALSEA voice_tone and sentiment)
+- "content": string — one concise sentence (max 20 words) capturing the core incident type and location, suitable for list views and push notifications
+- "summary": string — one full paragraph incident summary for dispatchers, including context, severity indicators, and caller details
+- "stress_level": string — one of "low", "moderate", "high", "critical" based on VALSEA metrics and transcript severity
+- "tone": string — single precise emotional tone word describing the caller (choose from: panicked, frantic, distressed, fearful, anxious, worried, upset, frustrated, confused, urgent, calm, neutral — pick the best match)
 - "priority": string — exactly one of "critical", "high", "medium", "low" for dispatch triage
 - "sentiment": string — exactly one of "positive", "neutral", "negative"
-- "urgency": number — 0.0 to 1.0 (align with VALSEA urgency when appropriate)
-- "stress": number — 0.0 to 1.0 (align with VALSEA stress when appropriate)
-- "frustration": number — 0.0 to 1.0
+- "urgency": number — 0.0 to 1.0; MUST synthesize three signals:
+    1. VALSEA urgency ({valsea.get("urgency", 0):.3f}) and stress ({valsea.get("stress", 0):.3f}) — use as baseline
+    2. Caller vocal tone: panicked/screaming=0.85–1.0; distressed/frantic=0.65–0.84; anxious/worried=0.40–0.64; calm/neutral=0.10–0.39
+    3. Transcript incident severity: deaths/casualties/building collapse/drowning=+0.15; active fire/flooding/medical emergency=+0.10; property damage=+0.05; informational=0
+    Add signals together and clamp to [0.05, 0.98]. Return a SPECIFIC decimal like 0.73, never exactly 0.0 or 1.0.
+- "stress": number — 0.0 to 1.0; start from VALSEA stress ({valsea.get("stress", 0):.3f}), adjust slightly for vocal distress cues; return a specific decimal like 0.61
+- "frustration": number — 0.0 to 1.0; start from VALSEA frustration ({valsea.get("frustration", 0):.3f}); return a specific decimal
 - "transcript": string — best transcript of what the caller said (prefer clarified text)
 - "action_items": string — numbered list of recommended dispatcher actions (e.g. "1. Send ambulance\\n2. ...")
 - "language": string — primary language spoken
-- "incident_type": string — refine the incident type if the transcript indicates otherwise
+- "incident_type": string — refine the incident type if the transcript clearly indicates otherwise
 
-Prioritize life safety. Use VALSEA stress and urgency to inform priority and stress_level."""
+Prioritize life safety. urgency, stress, and frustration MUST be specific non-zero decimals that reflect the actual severity — do NOT default to 0."""
 
     response = groq_client.chat.completions.create(
         model=GROQ_MODEL,
