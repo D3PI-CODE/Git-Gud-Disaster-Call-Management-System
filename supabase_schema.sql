@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS incidents (
 
 CREATE INDEX IF NOT EXISTS incidents_created_at_idx ON incidents (created_at DESC);
 
+-- Hot path for the claim-queue lookup ("PENDING + unassigned, by urgency")
+-- and for fetching an agent's own active cases.
+CREATE INDEX IF NOT EXISTS incidents_pending_unassigned_idx
+  ON incidents (urgency_score DESC, created_at DESC)
+  WHERE status = 'PENDING' AND agent_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS incidents_agent_id_idx
+  ON incidents (agent_id)
+  WHERE agent_id IS NOT NULL;
+
 -- Realtime
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE incidents;
@@ -88,12 +98,114 @@ DROP POLICY IF EXISTS "agents read own profile" ON agents;
 CREATE POLICY "agents read own profile" ON agents
   FOR SELECT TO authenticated USING (id = auth.uid());
 
+-- Visibility rules for the queue:
+--   1. Any registered agent may see PENDING incidents that nobody has claimed
+--      yet (the claimable pool).
+--   2. An agent may see incidents that are assigned specifically to them
+--      (their own active workload).
+--   3. Everything else (incidents in progress for a DIFFERENT agent, or
+--      already resolved by someone else) is hidden.
+-- This policy is also what Supabase Realtime evaluates per subscriber, so
+-- when an agent claims a row the row "disappears" from every other agent's
+-- live dashboard automatically.
 DROP POLICY IF EXISTS "agents read incidents" ON incidents;
-CREATE POLICY "agents read incidents" ON incidents
+DROP POLICY IF EXISTS "agents read claimable or own incidents" ON incidents;
+CREATE POLICY "agents read claimable or own incidents" ON incidents
   FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM agents WHERE agents.id = auth.uid()));
+  USING (
+    EXISTS (SELECT 1 FROM agents WHERE agents.id = auth.uid())
+    AND (
+      (status = 'PENDING' AND agent_id IS NULL)
+      OR agent_id = auth.uid()
+    )
+  );
+
+-- Primary write path: claim_incident() RPC (SECURITY DEFINER, row lock).
+-- Optional defense-in-depth if the client ever uses PostgREST UPDATE directly:
+DROP POLICY IF EXISTS "agents update incidents" ON incidents;
+DROP POLICY IF EXISTS "agents update claimable or own incidents" ON incidents;
+CREATE POLICY "agents update claimable or own incidents" ON incidents
+  FOR UPDATE TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM agents WHERE agents.id = auth.uid())
+    AND (
+      (status = 'PENDING' AND agent_id IS NULL)
+      OR agent_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    agent_id = auth.uid()
+    AND status = 'IN_PROGRESS'
+  );
 
 DROP POLICY IF EXISTS "agents read callers" ON users;
 CREATE POLICY "agents read callers" ON users
   FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM agents WHERE agents.id = auth.uid()));
+
+-- ─── Atomic case-claim RPC ─────────────────────────────────────────────
+-- Concurrency model (fastest-agent-wins):
+--   * `SELECT ... FOR UPDATE` takes a row-level lock on the target incident.
+--     If two agents race, Postgres serializes them through this lock; the
+--     first transaction to acquire it commits the claim, the second blocks
+--     until the first commits, then re-reads the row and sees status has
+--     already flipped to 'IN_PROGRESS' and bails with ALREADY_CLAIMED.
+--   * The status / agent_id guard is checked AFTER the lock is held, so
+--     there is no time-of-check-to-time-of-use window — a second claimer
+--     can never observe the row as PENDING+unassigned after the lock has
+--     been transferred.
+--   * SECURITY DEFINER lets the function modify `incidents` regardless of
+--     RLS write policies. The caller (FastAPI backend) is responsible for
+--     verifying the agent JWT and passing the verified `p_agent_id`.
+--   * Errors are raised with explicit messages ('INCIDENT_NOT_FOUND',
+--     'ALREADY_CLAIMED', 'AGENT_NOT_REGISTERED') so the API layer can map
+--     them to 404 / 409 / 403 cleanly.
+CREATE OR REPLACE FUNCTION public.claim_incident(
+  p_incident_id UUID,
+  p_agent_id UUID
+)
+RETURNS SETOF incidents
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_locked incidents%ROWTYPE;
+BEGIN
+  IF p_agent_id IS NULL THEN
+    RAISE EXCEPTION 'AGENT_NOT_REGISTERED' USING ERRCODE = '28000';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM agents WHERE id = p_agent_id) THEN
+    RAISE EXCEPTION 'AGENT_NOT_REGISTERED' USING ERRCODE = '28000';
+  END IF;
+
+  -- Row-level lock. Other concurrent claim_incident() calls for the same
+  -- incident_id queue up here; the loser will see the post-claim state.
+  SELECT * INTO v_locked
+  FROM incidents
+  WHERE id = p_incident_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'INCIDENT_NOT_FOUND' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_locked.status <> 'PENDING' OR v_locked.agent_id IS NOT NULL THEN
+    RAISE EXCEPTION 'ALREADY_CLAIMED' USING ERRCODE = '40001';
+  END IF;
+
+  RETURN QUERY
+    UPDATE incidents
+       SET status = 'IN_PROGRESS',
+           agent_id = p_agent_id
+     WHERE id = p_incident_id
+    RETURNING *;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.claim_incident(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.claim_incident(uuid, uuid)
+  TO authenticated, service_role;
+
+NOTIFY pgrst, 'reload schema';
