@@ -7,9 +7,10 @@ from telegram.ext import (
 )
 
 load_dotenv()
-
-TOKEN   = os.getenv("TELEGRAM_TOKEN")
+# Support both naming conventions
+TOKEN   = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+TRIAGE_WEBHOOK_SECRET = os.getenv("TRIAGE_WEBHOOK_SECRET", "").strip()
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
@@ -128,7 +129,16 @@ async def received_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             form.add_field("telegram_id",    str(update.effective_user.id))
             form.add_field("incident_type",  incident_type)
 
-            async with session.post(f"{API_URL}/incident", data=form) as resp:
+            ingest_headers = (
+                {"X-Webhook-Secret": TRIAGE_WEBHOOK_SECRET}
+                if TRIAGE_WEBHOOK_SECRET
+                else {}
+            )
+            async with session.post(
+                f"{API_URL}/incident",
+                data=form,
+                headers=ingest_headers,
+            ) as resp:
                 if resp.status != 200:
                     raise Exception(f"Backend returned {resp.status}")
                 data = await resp.json()
