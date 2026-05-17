@@ -1,0 +1,10 @@
+fastapi
+pydantic
+uvicorn
+python-multipart
+supabase
+python-dotenv
+requests
+groq
+email-validator
+psycopg2-binary

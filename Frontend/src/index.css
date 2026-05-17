@@ -1,0 +1,101 @@
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import 'tailwindcss';
+
+@keyframes urgency-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.35);
+    border-color: rgba(255, 59, 48, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 20px 2px rgba(255, 59, 48, 0.25);
+    border-color: rgba(255, 59, 48, 0.75);
+  }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* ── Core Backgrounds ── */
+  --bg-root:    #07080F;
+  --bg-surface: #0B0D17;
+  --bg-card:    #0E1020;
+  --bg-raise:   #131626;
+  --bg-input:   #090B14;
+
+  /* ── Borders ── */
+  --border:       rgba(255,255,255,0.055);
+  --border-mid:   rgba(255,255,255,0.10);
+  --border-hi:    rgba(255,255,255,0.18);
+
+  /* ── Text ── */
+  --txt-primary:   #E8ECF5;
+  --txt-secondary: #6C7A9C;
+  --txt-muted:     #353E58;
+  --txt-dim:       #1F2538;
+
+  /* ── Brand Accent (Electric Lime) ── */
+  --lime:        #A8FF3E;
+  --lime-dim:    rgba(168,255,62,0.10);
+  --lime-border: rgba(168,255,62,0.30);
+  --lime-glow:   rgba(168,255,62,0.20);
+
+  /* ── Blue Accent (Interactive) ── */
+  --blue:        #3D8BFF;
+  --blue-dim:    rgba(61,139,255,0.12);
+  --blue-border: rgba(61,139,255,0.30);
+
+  /* ── Priority ── */
+  --p-critical:   #FF3B30;
+  --p-critical-bg:    rgba(255,59,48,0.08);
+  --p-critical-border:rgba(255,59,48,0.28);
+  --p-critical-glow:  rgba(255,59,48,0.18);
+
+  --p-high:   #FF7A00;
+  --p-high-bg:    rgba(255,122,0,0.08);
+  --p-high-border:rgba(255,122,0,0.28);
+
+  --p-medium:   #FFBB00;
+  --p-medium-bg:    rgba(255,187,0,0.08);
+  --p-medium-border:rgba(255,187,0,0.28);
+
+  --p-low:   #34C759;
+  --p-low-bg:    rgba(52,199,89,0.08);
+  --p-low-border:rgba(52,199,89,0.28);
+
+  /* ── Typography ── */
+  --font-display: 'Chakra Petch', sans-serif;
+  --font-body:    'Outfit', sans-serif;
+  --font-mono:    'JetBrains Mono', monospace;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg-root);
+  color: var(--txt-primary);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root { min-height: 100vh; }
+
+/* Custom scrollbar */
+::-webkit-scrollbar       { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+
+input, textarea, button, select { font-family: inherit; }
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:hover,
+a:focus,
+a:focus-visible {
+  text-decoration: underline;
+}

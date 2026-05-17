@@ -1,0 +1,11 @@
+{
+  "include": ["Backend"],
+  "venvPath": "Backend",
+  "venv": "venv",
+  "executionEnvironments": [
+    {
+      "root": "Backend",
+      "pythonVersion": "3.9"
+    }
+  ]
+}
