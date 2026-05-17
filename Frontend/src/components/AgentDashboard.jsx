@@ -54,6 +54,35 @@ const TONE_URGENCY = {
   worried: 0.55, concerned: 0.50, frustrated: 0.52, confused: 0.42,
   neutral: 0.25, calm: 0.18, polite: 0.15,
 }
+const COMMON_SENTENCE_ABBREVIATIONS = new Set([
+  'mr.', 'mrs.', 'ms.', 'dr.', 'prof.', 'sr.', 'jr.', 'st.', 'mt.',
+  'vs.', 'etc.', 'e.g.', 'i.e.', 'a.m.', 'p.m.',
+])
+
+function normalizeFractionLike(value) {
+  const num = Number(value)
+  if (Number.isNaN(num) || num <= 0) return 0
+  if (num <= 1) return num
+  if (num <= 10) return num / 10
+  return Math.min(num / 100, 1)
+}
+
+function extractHeadlineText(text) {
+  const summary = String(text || '').trim()
+  if (!summary) return ''
+
+  const parts = summary.split(/(?<=[.!?])\s+/)
+  if (parts.length < 2) return summary
+
+  const firstSentence = parts[0].trim()
+  const words = firstSentence.split(/\s+/)
+  const lastToken = words.at(-1)?.toLowerCase() || ''
+  if (COMMON_SENTENCE_ABBREVIATIONS.has(lastToken) || /\b[A-Za-z]\.$/.test(firstSentence)) {
+    return summary
+  }
+
+  return firstSentence
+}
 
 /**
  * Derive the best available urgency score (0–1) from all signals in the
@@ -71,7 +100,8 @@ function deriveUrgency(incident) {
   // 1. Top-level urgency_score
   const direct = Number(incident.urgency_score)
   if (direct > 0 && direct <= 1) return direct
-  if (direct > 1) return direct / 100   // guard: someone stored as 0-100
+  if (direct > 1 && direct <= 10) return direct / 10
+  if (direct > 10) return direct / 100   // guard: someone stored as 0-100
 
   const sd = parseStructured(incident.structured_data)
 
@@ -336,7 +366,7 @@ const STRUCTURED_TAG_SKIP = new Set([
 // Only show these specific keys as metadata tags (allowlist approach)
 const STRUCTURED_TAG_ALLOW = new Set([
   'stress_level', 'sentiment', 'language', 'stress', 'frustration',
-  'caller_name', 'incident_type',
+  'incident_type',
 ])
 
 // Tags that are numeric (0–1 scale) → displayed as a percentage
@@ -363,7 +393,7 @@ function StructuredTags({ data, incidentType }) {
     <div className="tag-container">
       {allEntries.map(([key, val]) => {
         const display = NUMERIC_TAG_KEYS.has(key)
-          ? `${Math.round(Number(val) * 100)}%`
+          ? `${Math.round(normalizeFractionLike(val) * 100)}%`
           : String(val)
         return (
           <span key={key} className={`tag-pill tag-pill--${key.replace(/_/g, '-')}`}>
@@ -383,16 +413,15 @@ function StructuredTags({ data, incidentType }) {
  * - Old records: content === summary (backend set them equal); extract only
  *   the first sentence so they don't look identical on the card.
  */
-function deriveContent(structured) {
+function deriveContent(structured, transcript = '') {
   const content = String(structured.content || '').trim()
   const summary = String(structured.summary || '').trim()
 
-  if (!content) return summary.split(/\.\s+/)[0] || ''
+  if (!content) return extractHeadlineText(summary) || transcript
 
   // If backend stored content = summary (pre-fix data), extract first sentence
   if (content === summary) {
-    const first = content.split(/\.\s+/)[0]
-    return first.endsWith('.') ? first : first + (first ? '.' : '')
+    return extractHeadlineText(content)
   }
 
   return content
@@ -417,7 +446,11 @@ function trimRedundantPrefix(content, summary) {
   const s = summary.trim()
 
   // 1. Exact prefix match (case-insensitive)
-  if (s.toLowerCase().startsWith(c.toLowerCase())) {
+  const nextChar = s.charAt(c.length)
+  if (
+    s.toLowerCase().startsWith(c.toLowerCase()) &&
+    (!nextChar || /[\s.,!?;:)\]-]/.test(nextChar))
+  ) {
     return s.slice(c.length).replace(/^[\s.,]+/, '').trim()
   }
 
@@ -487,13 +520,14 @@ function IncidentCard({
 
   const callerName = incident.users?.name || structured.caller_name || ''
   const contactNumber = incident.users?.contact_number || ''
+  const transcript = String(incident.transcript || '').trim()
 
   // Short headline (content) — distinct from the full dispatcher summary
-  const content = deriveContent(structured)
+  const content = deriveContent(structured, transcript)
   // Full dispatcher summary — strip any prefix that repeats the headline
   const rawSummary = String(structured.summary || '').trim()
   const displaySummary = trimRedundantPrefix(content, rawSummary)
-  const showSummary = displaySummary && displaySummary !== content && displaySummary.length > 20
+  const showSummary = displaySummary && displaySummary !== content
   const isActive = variant === 'active'
 
   return (

@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import Any, Optional
 
 from fastapi import (
@@ -38,6 +39,24 @@ from auth_guard import CurrentAgent, get_current_agent, resolve_agent_from_heade
 from valsea import ValseaError, transcribe_audio
 
 logger = logging.getLogger(__name__)
+
+_COMMON_SENTENCE_ABBREVIATIONS = {
+    "mr.",
+    "mrs.",
+    "ms.",
+    "dr.",
+    "prof.",
+    "sr.",
+    "jr.",
+    "st.",
+    "mt.",
+    "vs.",
+    "etc.",
+    "e.g.",
+    "i.e.",
+    "a.m.",
+    "p.m.",
+}
 
 app = FastAPI(title="Disaster Call Management System API")
 
@@ -280,6 +299,23 @@ def _get_default_user_id() -> Optional[str]:
     return None
 
 
+def _extract_headline_text(text: Any) -> str:
+    """Return a short headline when a safe sentence boundary exists."""
+    summary = str(text or "").strip()
+    if not summary:
+        return ""
+
+    parts = re.split(r"(?<=[.!?])\s+", summary)
+    if len(parts) < 2:
+        return summary
+
+    first_sentence = parts[0].strip()
+    last_token = first_sentence.lower().split()[-1] if first_sentence.split() else ""
+    if last_token in _COMMON_SENTENCE_ABBREVIATIONS or re.search(r"\b[A-Za-z]\.$", first_sentence):
+        return summary
+    return first_sentence
+
+
 def _persist_incident(record: dict, user_id: Optional[str]) -> Optional[str]:
     """Insert the processed incident into Supabase and return the DB-generated UUID."""
     if not supabase:
@@ -293,10 +329,8 @@ def _persist_incident(record: dict, user_id: Optional[str]) -> Optional[str]:
     # Only fall back to summary when content is genuinely absent (legacy records);
     # new records set content explicitly via build_structured_data.
     if not structured_data.get("content"):
-        # Use first sentence of summary as a concise fallback content
         summary = structured_data.get("summary", "")
-        first_sentence = summary.split(".")[0].strip()
-        structured_data["content"] = first_sentence + "." if first_sentence else summary
+        structured_data["content"] = _extract_headline_text(summary)
 
     db_payload = {
         "user_id": user_id,
@@ -600,7 +634,7 @@ async def get_incident_status(ref_id: str):
         )
     )
     return {
-        **row,
+        **{key: value for key, value in row.items() if key != "structured_data"},
         "priority": priority,
     }
 
