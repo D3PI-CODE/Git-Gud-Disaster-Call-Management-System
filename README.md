@@ -80,3 +80,10 @@ Python application for processing incidents and managing data logic.
 - **Name**: ResqNet
 - **Type**: Disaster Call Management System
 - **Status**: In Development
+
+## Testing Agent Account
+
+- **Email**: agent@gmail.com
+- **Password**: agent123
+- **Agent Dashboard Frontend URL**: https://resqnetfrontend.vercel.app
+- **Telegram Bot Username**: @GitGud_ResQNet_bot
